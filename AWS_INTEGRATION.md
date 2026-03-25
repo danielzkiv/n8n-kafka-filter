@@ -89,7 +89,29 @@ Using the GCP external IP from step 2:
 
 ---
 
-## Step 5 — GCP Team: Update PIPELINES_JSON
+## Step 5 — GCP Team: Set up DNS forwarding for MSK hostnames
+
+GCP cannot resolve AWS private DNS hostnames (e.g. `b-1.cluster.kafka.us-east-1.amazonaws.com`) by default. A Cloud DNS forwarding zone points GCP to the AWS VPC's internal DNS resolver.
+
+The AWS DNS resolver IP is always: **VPC base CIDR + 2**
+Example: if AWS VPC is `10.0.0.0/16` → resolver is `10.0.0.2`
+
+Run in Cloud Shell (replace `10.0.0.2` with the correct IP for your AWS VPC):
+
+```bash
+gcloud dns managed-zones create aws-kafka-dns \
+  --dns-name="kafka.us-east-1.amazonaws.com." \
+  --description="Forward MSK DNS to AWS resolver" \
+  --visibility=private \
+  --networks=default \
+  --forwarding-targets=10.0.0.2
+```
+
+> If your MSK is in a different region (e.g. `eu-west-1`), change `kafka.us-east-1.amazonaws.com.` to match.
+
+---
+
+## Step 6 — GCP Team: Update PIPELINES_JSON
 
 In Cloud Run → **Edit & Deploy New Revision** → **Variables & Secrets** → update `PIPELINES_JSON`:
 
@@ -113,7 +135,7 @@ For plaintext Kafka (no auth), use `"kafka_security_protocol": "PLAINTEXT"` and 
 
 ---
 
-## Step 6 — Verify
+## Step 7 — Verify
 
 Check Cloud Run logs:
 https://console.cloud.google.com/run/detail/us-central1/n8n-kafka-filter/logs?project=bdi-apps-491216
@@ -149,8 +171,9 @@ Expected:
 - [x] Google Sign-In configured
 - [x] VPN scripts pre-filled with project values (`bdi-apps-491216`, `us-central1`, `n8n-kafka-filter`)
 
-### GCP Team (us) — waiting on AWS
+### GCP Team (us) — waiting on AWS team
 - [ ] Fill in `AWS_VPC_CIDR` in `setup_vpn_step1.sh` and run it → send GCP IP to AWS team
 - [ ] Fill in tunnel details in `setup_vpn_step2.sh` and run it → verify ESTABLISHED
+- [ ] Create Cloud DNS forwarding zone for MSK hostnames (Step 5)
 - [ ] Update `PIPELINES_JSON` with MSK broker endpoints and credentials
 - [ ] Verify Kafka consumer connects and events flow to n8n
