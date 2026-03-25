@@ -32,10 +32,8 @@ class FilterRule:
 
 @dataclass
 class _FilterSet:
-    """A self-contained filter: a mode + its rules."""
-    mode: Literal["none", "any", "all", "drop"]
+    mode: Literal["any", "all"]
     rules: list[FilterRule] = field(default_factory=list)
-    disabled: bool = False
 
 
 def _parse_rules(rules_dicts: list[dict]) -> list[FilterRule]:
@@ -55,106 +53,54 @@ def _parse_rules(rules_dicts: list[dict]) -> list[FilterRule]:
 
 class FilterEngine:
     """
-    Routes each incoming event to the right filter set based on event type.
-
-    Two modes of operation:
-    1. Global (simple): one filter_mode + filter_rules applied to every event.
-    2. Per-event-type (routing): reads `event_type_field` from the event,
-       looks up the matching EventFilterConfig, and applies its rules.
-       Unknown event types fall back to `default_filter_mode`.
+    Routes each incoming event by event_type:
+    - event_type not in event body              → skip
+    - event_type not configured                 → skip
+    - event_type configured, rules match        → forward
+    - event_type configured, rules don't match  → skip
     """
 
     def __init__(
         self,
-        global_filter: _FilterSet,
         event_type_field: str = "event_type",
         event_filters: dict[str, _FilterSet] | None = None,
-        default_filter_mode: Literal["none", "drop"] = "none",
     ) -> None:
-        self._global = global_filter
         self._event_type_field = event_type_field
         self._event_filters: dict[str, _FilterSet] = event_filters or {}
-        self._default_filter_mode = default_filter_mode
-
-    # ------------------------------------------------------------------
-    # Factory methods
-    # ------------------------------------------------------------------
 
     @classmethod
     def from_pipeline(cls, pipeline: "PipelineConfig") -> "FilterEngine":
-        """Primary factory — builds from a full PipelineConfig."""
-        global_filter = _FilterSet(
-            mode=pipeline.filter_mode,
-            rules=_parse_rules(pipeline.filter_rules),
-        )
         event_filters = {
             event_type: _FilterSet(
                 mode=ef.filter_mode,
                 rules=_parse_rules(ef.filter_rules),
-                disabled=ef.disabled,
             )
             for event_type, ef in pipeline.event_filters.items()
         }
         return cls(
-            global_filter=global_filter,
             event_type_field=pipeline.event_type_field,
             event_filters=event_filters,
-            default_filter_mode=pipeline.default_filter_mode,
         )
 
-    @classmethod
-    def from_config(cls, rules_dicts: list[dict], mode: Literal["any", "all", "none"]) -> "FilterEngine":
-        """Backwards-compatible factory for tests and simple use cases."""
-        return cls(global_filter=_FilterSet(mode=mode, rules=_parse_rules(rules_dicts)))
-
-    # ------------------------------------------------------------------
-    # Main entry point
-    # ------------------------------------------------------------------
-
     def should_forward(self, event: dict) -> tuple[bool, str]:
-        """Return (should_forward, reason_string) for the given event."""
-        if self._event_filters:
-            return self._route(event)
-        return self._apply_filter_set(self._global, event)
-
-    # ------------------------------------------------------------------
-    # Routing logic
-    # ------------------------------------------------------------------
-
-    def _route(self, event: dict) -> tuple[bool, str]:
         raw_type = self._resolve_field(event, self._event_type_field)
 
         if raw_type is _MISSING:
-            return self._apply_default(f"field_missing:{self._event_type_field}")
+            return False, f"no_field:{self._event_type_field}"
 
         event_type = str(raw_type)
         filter_set = self._event_filters.get(event_type)
 
         if filter_set is None:
-            return self._apply_default(f"unknown_event_type:{event_type}")
+            return False, f"unknown_event_type:{event_type}"
 
-        if filter_set.disabled:
-            return self._apply_default(f"event_type:{event_type}:disabled")
+        if not filter_set.rules:
+            return False, f"{event_type}:no_rules"
 
         result, reason = self._apply_filter_set(filter_set, event)
-        return result, f"event_type:{event_type}:{reason}"
-
-    def _apply_default(self, context: str) -> tuple[bool, str]:
-        if self._default_filter_mode == "drop":
-            return False, f"{context}:default_drop"
-        return True, f"{context}:default_forward"
-
-    # ------------------------------------------------------------------
-    # Filter set evaluation
-    # ------------------------------------------------------------------
+        return result, f"{event_type}:{reason}"
 
     def _apply_filter_set(self, fs: _FilterSet, event: dict) -> tuple[bool, str]:
-        if fs.mode == "drop":
-            return False, "drop"
-
-        if fs.mode == "none" or not fs.rules:
-            return True, "no_filter"
-
         results = [(self._evaluate(rule, event), f"rule:{rule.rule_id}") for rule in fs.rules]
 
         if fs.mode == "any":

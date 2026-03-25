@@ -254,15 +254,14 @@ async def api_get_pipelines() -> JSONResponse:
     result = {}
     for name, state in _pipelines.items():
         saved = stored.get(name, {})
-        ef = saved.get("event_filters", {k: {"filter_mode": v.filter_mode, "filter_rules": v.filter_rules}
-                                            for k, v in state.config.event_filters.items()})
+        ef = saved.get("event_filters", {
+            k: {"filter_mode": v.filter_mode, "filter_rules": v.filter_rules}
+            for k, v in state.config.event_filters.items()
+        })
         result[name] = {
             "name": name,
-            "event_type_field":    saved.get("event_type_field",    state.config.event_type_field),
-            "default_filter_mode": saved.get("default_filter_mode", state.config.default_filter_mode),
-            "filter_mode":         saved.get("filter_mode",         state.config.filter_mode),
-            "filter_rules":        saved.get("filter_rules",        state.config.filter_rules),
-            "event_filters":       ef,
+            "event_type_field": saved.get("event_type_field", state.config.event_type_field),
+            "event_filters": ef,
         }
     return JSONResponse(result)
 
@@ -279,19 +278,13 @@ async def api_update_filters(env: str, request: Request) -> JSONResponse:
     except Exception:
         return JSONResponse({"error": "Invalid JSON"}, status_code=422)
 
-    # Persist to filter_config.json
     filter_store.set_pipeline(env, data)
 
-    # Update the live pipeline config
-    state.config.filter_mode         = data.get("filter_mode", "none")
-    state.config.filter_rules        = data.get("filter_rules", [])
-    state.config.event_type_field    = data.get("event_type_field", "event_type")
-    state.config.default_filter_mode = data.get("default_filter_mode", "none")
-    state.config.event_filters       = {
+    state.config.event_type_field = data.get("event_type_field", "event_type")
+    state.config.event_filters = {
         k: EventFilterConfig(**v) for k, v in data.get("event_filters", {}).items()
     }
 
-    # Hot-reload the filter engine
     state.filter_engine = FilterEngine.from_pipeline(state.config)
 
     logger.info("Filters updated via UI", extra={"env": env})

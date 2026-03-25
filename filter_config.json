@@ -1,9 +1,1 @@
-{
-  "dev": {
-    "event_type_field": "event_type",
-    "default_filter_mode": "none",
-    "event_filters": {},
-    "filter_mode": "any",
-    "filter_rules": []
-  }
-}
+{}

@@ -5,10 +5,6 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>n8n Kafka Filter</title>
   <script src="https://cdn.tailwindcss.com"></script>
-  <style>
-    .slide-down { animation: slideDown 0.15s ease-out; }
-    @keyframes slideDown { from { opacity:0; transform:translateY(-6px) } to { opacity:1; transform:translateY(0) } }
-  </style>
 </head>
 <body class="bg-gray-50 min-h-screen text-gray-800">
 <div class="max-w-3xl mx-auto px-4 py-8">
@@ -17,7 +13,7 @@
   <div class="flex items-center justify-between mb-6">
     <div>
       <h1 class="text-xl font-bold">n8n Kafka Filter</h1>
-      <p class="text-xs text-gray-400 mt-0.5">Event filter configuration</p>
+      <p class="text-xs text-gray-400 mt-0.5">Event type → rules → webhook</p>
     </div>
     <span id="save-badge" class="hidden text-xs font-medium bg-green-100 text-green-700 px-3 py-1 rounded-full">✓ Saved</span>
   </div>
@@ -51,13 +47,10 @@
 
 <script>
 const OPERATORS = ['eq','neq','contains','in','exists','regex','gt','gte','lt','lte'];
-const EVENT_MODES = ['none','any','all','drop'];
 
 let pipelines = {};
 let active = null;
-let editingKey = null; // event type being edited in modal
-
-// ── Bootstrap ─────────────────────────────────────────────────────────────────
+let editingKey = null;
 
 async function load() {
   const r = await fetch('/api/pipelines');
@@ -67,8 +60,6 @@ async function load() {
   renderTabs(names);
   renderPanel();
 }
-
-// ── Tabs ──────────────────────────────────────────────────────────────────────
 
 function renderTabs(names) {
   document.getElementById('tabs').innerHTML = names.map(n => `
@@ -85,8 +76,6 @@ function selectPipeline(name) {
   renderPanel();
 }
 
-// ── Panel ─────────────────────────────────────────────────────────────────────
-
 function renderPanel() {
   const p = pipelines[active];
   if (!p) return;
@@ -95,20 +84,13 @@ function renderPanel() {
 
   document.getElementById('panel').innerHTML = `
 
-    <!-- Settings row -->
+    <!-- Event type field setting -->
     <div class="bg-white rounded-xl border p-4 flex gap-4 items-end">
       <div class="flex-1">
         <label class="block text-xs font-semibold text-gray-500 mb-1">Event type field</label>
-        <input id="etf" value="${p.event_type_field||'event_type'}"
+        <input id="etf" value="${p.event_type_field || 'event_type'}"
           class="w-full border rounded-lg px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400"
           placeholder="event_type" onchange="autoSave()">
-      </div>
-      <div class="w-52">
-        <label class="block text-xs font-semibold text-gray-500 mb-1">Unknown event types</label>
-        <select id="dfm" class="w-full border rounded-lg px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400" onchange="autoSave()">
-          <option value="none" ${(p.default_filter_mode||'none')==='none'?'selected':''}>Forward (pass through)</option>
-          <option value="drop" ${p.default_filter_mode==='drop'?'selected':''}>Drop (discard)</option>
-        </select>
       </div>
     </div>
 
@@ -116,7 +98,7 @@ function renderPanel() {
     <div class="bg-white rounded-xl border overflow-hidden">
       <div class="flex items-center justify-between px-4 py-3 border-b bg-gray-50">
         <span class="text-xs font-semibold text-gray-500 uppercase tracking-wide">
-          Event Type Filters
+          Event Types
           <span class="ml-1 text-gray-400 font-normal normal-case">${entries.length} configured</span>
         </span>
         <button onclick="openAddModal()"
@@ -128,27 +110,22 @@ function renderPanel() {
       ${entries.length === 0 ? `
         <div class="text-center py-12 text-gray-300">
           <div class="text-4xl mb-2">⚙</div>
-          <div class="text-sm">No event type filters configured</div>
-          <div class="text-xs mt-1">All events will be ${p.default_filter_mode==='drop'?'dropped':'forwarded'} by default</div>
+          <div class="text-sm">No event types configured</div>
+          <div class="text-xs mt-1">All events will be skipped until you add an event type with rules</div>
         </div>` :
 
         entries.map(([et, cfg]) => `
         <div class="flex items-center gap-3 px-4 py-3 border-b last:border-b-0 hover:bg-gray-50 transition-colors group">
 
           <!-- Status dot -->
-          <div class="w-2 h-2 rounded-full flex-shrink-0 ${cfg.disabled ? 'bg-gray-300' : modeDot(cfg.filter_mode)}"></div>
+          <div class="w-2 h-2 rounded-full flex-shrink-0 ${(cfg.filter_rules||[]).length > 0 ? 'bg-blue-400' : 'bg-gray-300'}"></div>
 
-          <!-- Event type name -->
+          <!-- Event type info -->
           <div class="flex-1 min-w-0">
-            <div class="flex items-center gap-2">
-              <span class="text-sm font-mono font-medium ${cfg.disabled?'text-gray-400 line-through':''}">${et}</span>
-              ${cfg.disabled ? '<span class="text-xs bg-gray-100 text-gray-400 px-1.5 py-0.5 rounded">off</span>' : ''}
-            </div>
+            <span class="text-sm font-mono font-medium">${et}</span>
             <div class="text-xs text-gray-400 mt-0.5">
-              ${modeBadge(cfg.filter_mode)}
-              ${(cfg.filter_rules||[]).length > 0
-                ? ` &middot; ${cfg.filter_rules.length} rule${cfg.filter_rules.length!==1?'s':''}`
-                : ''}
+              ${cfg.filter_mode === 'all' ? 'all rules must match' : 'any rule matches'} &middot;
+              ${(cfg.filter_rules||[]).length} rule${(cfg.filter_rules||[]).length !== 1 ? 's' : ''}
             </div>
           </div>
 
@@ -157,10 +134,6 @@ function renderPanel() {
             <button onclick="openEditModal('${et}')"
               class="text-xs px-2.5 py-1 rounded-lg border hover:bg-blue-50 hover:border-blue-200 hover:text-blue-600 transition-colors">
               Edit
-            </button>
-            <button onclick="toggleDisabled('${et}')"
-              class="text-xs px-2.5 py-1 rounded-lg border hover:bg-yellow-50 hover:border-yellow-200 hover:text-yellow-600 transition-colors">
-              ${cfg.disabled ? 'Enable' : 'Disable'}
             </button>
             <button onclick="deleteEventType('${et}')"
               class="text-xs px-2.5 py-1 rounded-lg border hover:bg-red-50 hover:border-red-200 hover:text-red-500 transition-colors">
@@ -171,46 +144,7 @@ function renderPanel() {
         </div>`).join('')
       }
     </div>
-
-    ${entries.length === 0 ? globalFilterSection(p) : ''}
   `;
-}
-
-function modeDot(mode) {
-  return {none:'bg-green-400', any:'bg-blue-400', all:'bg-purple-400', drop:'bg-red-400'}[mode] || 'bg-gray-300';
-}
-function modeBadge(mode) {
-  const labels = {none:'forward all', any:'forward if any rule matches', all:'forward if all rules match', drop:'always drop'};
-  return labels[mode] || mode;
-}
-
-function globalFilterSection(p) {
-  return `
-    <div class="bg-white rounded-xl border p-4">
-      <div class="flex items-center justify-between mb-3">
-        <div>
-          <div class="text-xs font-semibold text-gray-500 uppercase">Global Filter</div>
-          <div class="text-xs text-gray-400">Applied when no event type filters are configured</div>
-        </div>
-        <select id="gfm" class="border rounded-lg px-2 py-1 text-sm" onchange="autoSave()">
-          ${['none','any','all'].map(m=>`<option value="${m}" ${(p.filter_mode||'none')===m?'selected':''}>${m}</option>`).join('')}
-        </select>
-      </div>
-      <div id="global-rules" class="space-y-2">
-        ${(p.filter_rules||[]).map(ruleRow).join('')}
-      </div>
-      <button onclick="addGlobalRule()" class="mt-2 text-xs text-blue-600 hover:text-blue-800">+ Add rule</button>
-    </div>`;
-}
-
-// ── Quick actions ─────────────────────────────────────────────────────────────
-
-function toggleDisabled(et) {
-  const ef = pipelines[active].event_filters || {};
-  ef[et].disabled = !ef[et].disabled;
-  pipelines[active].event_filters = ef;
-  renderPanel();
-  save();
 }
 
 function deleteEventType(et) {
@@ -222,12 +156,10 @@ function deleteEventType(et) {
   save();
 }
 
-// ── Modal ─────────────────────────────────────────────────────────────────────
-
 function openAddModal() {
   editingKey = null;
-  document.getElementById('modal-title').textContent = 'Add event type filter';
-  document.getElementById('modal-body').innerHTML = modalBody('', {filter_mode:'none', filter_rules:[], disabled:false});
+  document.getElementById('modal-title').textContent = 'Add event type';
+  document.getElementById('modal-body').innerHTML = modalBody('', {filter_mode: 'any', filter_rules: []});
   document.getElementById('modal').classList.remove('hidden');
 }
 
@@ -245,6 +177,7 @@ function closeModal() {
 }
 
 function modalBody(et, cfg) {
+  const mode = cfg.filter_mode || 'any';
   return `
     <div class="space-y-4">
       <div>
@@ -253,20 +186,22 @@ function modalBody(et, cfg) {
           class="w-full border rounded-lg px-3 py-2 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-blue-400">
       </div>
       <div>
-        <label class="block text-xs font-semibold text-gray-500 mb-1">Mode</label>
-        <div class="grid grid-cols-4 gap-2">
-          ${EVENT_MODES.map(m => `
-            <label class="flex items-center justify-center border rounded-lg py-2 text-sm cursor-pointer transition-colors
-              ${cfg.filter_mode===m ? 'bg-blue-600 text-white border-blue-600' : 'hover:bg-gray-50'}">
-              <input type="radio" name="m-mode" value="${m}" ${cfg.filter_mode===m?'checked':''} class="hidden"
-                onchange="document.querySelectorAll('[name=m-mode]').forEach(r=>r.parentElement.className=r.parentElement.className.replace('bg-blue-600 text-white border-blue-600','hover:bg-gray-50'));this.parentElement.className=this.parentElement.className.replace('hover:bg-gray-50','bg-blue-600 text-white border-blue-600'))">
-              ${m}
+        <label class="block text-xs font-semibold text-gray-500 mb-1">Match mode</label>
+        <div class="grid grid-cols-2 gap-2">
+          ${['any','all'].map(m => `
+            <label class="flex flex-col items-center border rounded-lg py-2 px-3 text-sm cursor-pointer transition-colors
+              ${mode===m ? 'bg-blue-600 text-white border-blue-600' : 'hover:bg-gray-50'}" id="mode-label-${m}">
+              <input type="radio" name="m-mode" value="${m}" ${mode===m?'checked':''} class="hidden"
+                onchange="updateModeLabels()">
+              <span class="font-medium">${m === 'any' ? 'Any' : 'All'}</span>
+              <span class="text-xs mt-0.5 ${mode===m?'text-blue-100':'text-gray-400'}" id="mode-sub-${m}">
+                ${m === 'any' ? '≥1 rule matches' : 'every rule matches'}
+              </span>
             </label>`).join('')}
         </div>
-        <p class="text-xs text-gray-400 mt-1">${modeDesc()}</p>
       </div>
-      <div id="rules-section" class="${(cfg.filter_mode||'none')==='drop'||(cfg.filter_mode||'none')==='none' ? 'opacity-50 pointer-events-none' : ''}">
-        <label class="block text-xs font-semibold text-gray-500 mb-2">Filter rules</label>
+      <div>
+        <label class="block text-xs font-semibold text-gray-500 mb-2">Rules</label>
         <div id="m-rules" class="space-y-2">
           ${(cfg.filter_rules||[]).map(ruleRow).join('')}
         </div>
@@ -275,8 +210,19 @@ function modalBody(et, cfg) {
     </div>`;
 }
 
-function modeDesc() {
-  return 'none = forward all &middot; any = forward if ≥1 rule matches &middot; all = forward if all rules match &middot; drop = always discard';
+function updateModeLabels() {
+  ['any','all'].forEach(m => {
+    const checked = document.querySelector(`input[name="m-mode"][value="${m}"]`).checked;
+    const label = document.getElementById(`mode-label-${m}`);
+    const sub = document.getElementById(`mode-sub-${m}`);
+    if (checked) {
+      label.className = label.className.replace('hover:bg-gray-50', 'bg-blue-600 text-white border-blue-600');
+      sub.className = sub.className.replace('text-gray-400', 'text-blue-100');
+    } else {
+      label.className = label.className.replace('bg-blue-600 text-white border-blue-600', 'hover:bg-gray-50');
+      sub.className = sub.className.replace('text-blue-100', 'text-gray-400');
+    }
+  });
 }
 
 function saveModal() {
@@ -284,16 +230,12 @@ function saveModal() {
   if (!et) { alert('Event type name is required'); return; }
 
   const modeEl = document.querySelector('input[name="m-mode"]:checked');
-  const mode = modeEl ? modeEl.value : 'none';
-  const rulesEl = document.getElementById('m-rules');
-  const rules = rulesEl ? collectRules(rulesEl) : [];
+  const mode = modeEl ? modeEl.value : 'any';
+  const rules = collectRules(document.getElementById('m-rules'));
 
   const ef = pipelines[active].event_filters || {};
-
-  // If renaming, remove old key
   if (editingKey && editingKey !== et) delete ef[editingKey];
-
-  ef[et] = { filter_mode: mode, filter_rules: rules, disabled: ef[et]?.disabled || false };
+  ef[et] = { filter_mode: mode, filter_rules: rules };
   pipelines[active].event_filters = ef;
 
   closeModal();
@@ -304,8 +246,6 @@ function saveModal() {
 function addModalRule() {
   document.getElementById('m-rules').appendChild(newRuleEl());
 }
-
-// ── Rules ─────────────────────────────────────────────────────────────────────
 
 function ruleRow(r) {
   const val = r.value === null || r.value === undefined ? '' : String(r.value);
@@ -341,7 +281,7 @@ function collectRules(container) {
     let value;
     try { value = JSON.parse(raw); } catch { value = raw || null; }
     return {
-      rule_id:  row.querySelector('.r-id').value   || ('r-' + Math.random().toString(36).slice(2,7)),
+      rule_id:  row.querySelector('.r-id').value || ('r-' + Math.random().toString(36).slice(2,7)),
       field:    row.querySelector('.r-field').value.trim(),
       operator: row.querySelector('.r-op').value,
       value,
@@ -349,26 +289,13 @@ function collectRules(container) {
   }).filter(r => r.field);
 }
 
-function addGlobalRule() {
-  const c = document.getElementById('global-rules');
-  if (c) c.appendChild(newRuleEl());
-}
-
-// ── Save ──────────────────────────────────────────────────────────────────────
-
 function autoSave() { save(); }
 
 async function save() {
   const p = pipelines[active];
-  const gfmEl = document.getElementById('gfm');
-  const grEl  = document.getElementById('global-rules');
-
   const payload = {
-    event_type_field:    (document.getElementById('etf')?.value || p.event_type_field || 'event_type').trim(),
-    default_filter_mode: document.getElementById('dfm')?.value || p.default_filter_mode || 'none',
-    event_filters:       p.event_filters || {},
-    filter_mode:         gfmEl ? gfmEl.value : (p.filter_mode || 'none'),
-    filter_rules:        grEl  ? collectRules(grEl) : (p.filter_rules || []),
+    event_type_field: (document.getElementById('etf')?.value || p.event_type_field || 'event_type').trim(),
+    event_filters: p.event_filters || {},
   };
 
   pipelines[active] = { ...p, ...payload };
@@ -379,14 +306,13 @@ async function save() {
     body: JSON.stringify(payload),
   });
 
-  const badge = document.getElementById('save-badge');
   if (r.ok) {
+    const badge = document.getElementById('save-badge');
     badge.classList.remove('hidden');
     setTimeout(() => badge.classList.add('hidden'), 2000);
   }
 }
 
-// Close modal on backdrop click
 document.getElementById('modal').addEventListener('click', e => {
   if (e.target === e.currentTarget) closeModal();
 });

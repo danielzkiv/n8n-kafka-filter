@@ -9,13 +9,10 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 class EventFilterConfig(BaseModel):
     """Filter config for a single event type."""
-    # "drop"  — always discard this event type, no rules evaluated
-    # "none"  — always forward, no rules evaluated
-    # "any"   — forward if at least one rule matches
-    # "all"   — forward only if every rule matches
-    filter_mode: Literal["none", "any", "all", "drop"] = "none"
+    # "any" — forward if at least one rule matches
+    # "all" — forward only if every rule matches
+    filter_mode: Literal["any", "all"] = "any"
     filter_rules: list[dict] = []
-    disabled: bool = False  # when True, falls through to default_filter_mode
 
 
 class PipelineConfig(BaseModel):
@@ -50,20 +47,12 @@ class PipelineConfig(BaseModel):
     webhook_max_retries: int = 3
     webhook_retry_backoff_seconds: float = 2.0   # Exponential base (capped at 30s)
 
-    # --- Per-event-type filtering (routing) ---
+    # --- Per-event-type filtering ---
     # Which field in the event body identifies its type.
     event_type_field: str = "event_type"
-    # Map of event_type value → its own filter config.
-    # If non-empty, each event is routed here first; global filter_mode/filter_rules
-    # are only used as a fallback when event_filters is empty.
+    # Map of event_type value → filter config with rules.
+    # Events whose type is not listed here are skipped.
     event_filters: dict[str, EventFilterConfig] = {}
-    # What to do with event types not listed in event_filters:
-    # "none" = forward them, "drop" = discard them.
-    default_filter_mode: Literal["none", "drop"] = "none"
-
-    # --- Global filter fallback (used when event_filters is empty) ---
-    filter_mode: Literal["any", "all", "none"] = "none"
-    filter_rules: list[dict] = []
 
     # --- Dead Letter Queue ---
     # Kafka topic where events are written when webhook delivery fails after all retries.
