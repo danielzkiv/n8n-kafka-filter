@@ -7,6 +7,16 @@ from pydantic import AnyHttpUrl, BaseModel, SecretStr, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
+class EventFilterConfig(BaseModel):
+    """Filter config for a single event type."""
+    # "drop"  — always discard this event type, no rules evaluated
+    # "none"  — always forward, no rules evaluated
+    # "any"   — forward if at least one rule matches
+    # "all"   — forward only if every rule matches
+    filter_mode: Literal["none", "any", "all", "drop"] = "none"
+    filter_rules: list[dict] = []
+
+
 class PipelineConfig(BaseModel):
     """Config for one environment's full pipeline: Kafka → Filter → n8n webhook."""
 
@@ -29,7 +39,18 @@ class PipelineConfig(BaseModel):
     webhook_max_retries: int = 3
     webhook_retry_backoff_seconds: float = 2.0   # Exponential base (capped at 30s)
 
-    # --- Filtering ---
+    # --- Per-event-type filtering (routing) ---
+    # Which field in the event body identifies its type.
+    event_type_field: str = "event_type"
+    # Map of event_type value → its own filter config.
+    # If non-empty, each event is routed here first; global filter_mode/filter_rules
+    # are only used as a fallback when event_filters is empty.
+    event_filters: dict[str, EventFilterConfig] = {}
+    # What to do with event types not listed in event_filters:
+    # "none" = forward them, "drop" = discard them.
+    default_filter_mode: Literal["none", "drop"] = "none"
+
+    # --- Global filter fallback (used when event_filters is empty) ---
     filter_mode: Literal["any", "all", "none"] = "none"
     filter_rules: list[dict] = []
 

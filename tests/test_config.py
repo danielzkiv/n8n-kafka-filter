@@ -1,6 +1,6 @@
 import json
 import pytest
-from app.config import PipelineConfig, Settings
+from app.config import EventFilterConfig, PipelineConfig, Settings
 
 
 def make_pipeline_dict(**overrides) -> dict:
@@ -85,3 +85,26 @@ def test_pipeline_with_filter_rules():
     assert p.filter_mode == "any"
     assert len(p.filter_rules) == 1
     assert p.filter_rules[0]["rule_id"] == "r1"
+
+
+def test_pipeline_event_filters():
+    p = PipelineConfig(**make_pipeline_dict(
+        event_type_field="event_type",
+        event_filters={
+            "order.created": {"filter_mode": "all", "filter_rules": [
+                {"rule_id": "r1", "field": "amount", "operator": "gte", "value": 100}
+            ]},
+            "test.ping": {"filter_mode": "drop", "filter_rules": []},
+        },
+        default_filter_mode="drop",
+    ))
+    assert len(p.event_filters) == 2
+    assert p.event_filters["order.created"].filter_mode == "all"
+    assert p.event_filters["test.ping"].filter_mode == "drop"
+    assert p.default_filter_mode == "drop"
+
+
+def test_event_filter_config_defaults():
+    ef = EventFilterConfig()
+    assert ef.filter_mode == "none"
+    assert ef.filter_rules == []

@@ -36,7 +36,7 @@ _pipelines: list[PipelineState] = []
 
 
 def _build_pipeline(pipeline_config: PipelineConfig) -> PipelineState:
-    filter_engine = FilterEngine.from_config(pipeline_config.filter_rules, pipeline_config.filter_mode)
+    filter_engine = FilterEngine.from_pipeline(pipeline_config)
     forwarder = WebhookForwarder(pipeline_config)
     consumer = KafkaConsumerService(pipeline_config, filter_engine, forwarder)
     return PipelineState(config=pipeline_config, consumer=consumer, forwarder=forwarder)

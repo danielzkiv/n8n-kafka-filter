@@ -2,8 +2,11 @@ from __future__ import annotations
 
 import logging
 import re
-from dataclasses import dataclass
-from typing import Any, Literal
+from dataclasses import dataclass, field
+from typing import Any, Literal, TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from app.config import PipelineConfig
 
 logger = logging.getLogger(__name__)
 
@@ -27,50 +30,138 @@ class FilterRule:
             )
 
 
+@dataclass
+class _FilterSet:
+    """A self-contained filter: a mode + its rules."""
+    mode: Literal["none", "any", "all", "drop"]
+    rules: list[FilterRule] = field(default_factory=list)
+
+
+def _parse_rules(rules_dicts: list[dict]) -> list[FilterRule]:
+    rules = []
+    for raw in rules_dicts:
+        try:
+            rules.append(FilterRule(
+                rule_id=raw["rule_id"],
+                field=raw["field"],
+                operator=raw["operator"],
+                value=raw.get("value"),
+            ))
+        except KeyError as e:
+            raise ValueError(f"Filter rule missing required key: {e}") from e
+    return rules
+
+
 class FilterEngine:
+    """
+    Routes each incoming event to the right filter set based on event type.
+
+    Two modes of operation:
+    1. Global (simple): one filter_mode + filter_rules applied to every event.
+    2. Per-event-type (routing): reads `event_type_field` from the event,
+       looks up the matching EventFilterConfig, and applies its rules.
+       Unknown event types fall back to `default_filter_mode`.
+    """
+
     def __init__(
         self,
-        rules: list[FilterRule],
-        mode: Literal["any", "all", "none"],
+        global_filter: _FilterSet,
+        event_type_field: str = "event_type",
+        event_filters: dict[str, _FilterSet] | None = None,
+        default_filter_mode: Literal["none", "drop"] = "none",
     ) -> None:
-        self._rules = rules
-        self._mode = mode
+        self._global = global_filter
+        self._event_type_field = event_type_field
+        self._event_filters: dict[str, _FilterSet] = event_filters or {}
+        self._default_filter_mode = default_filter_mode
+
+    # ------------------------------------------------------------------
+    # Factory methods
+    # ------------------------------------------------------------------
+
+    @classmethod
+    def from_pipeline(cls, pipeline: "PipelineConfig") -> "FilterEngine":
+        """Primary factory — builds from a full PipelineConfig."""
+        global_filter = _FilterSet(
+            mode=pipeline.filter_mode,
+            rules=_parse_rules(pipeline.filter_rules),
+        )
+        event_filters = {
+            event_type: _FilterSet(
+                mode=ef.filter_mode,
+                rules=_parse_rules(ef.filter_rules),
+            )
+            for event_type, ef in pipeline.event_filters.items()
+        }
+        return cls(
+            global_filter=global_filter,
+            event_type_field=pipeline.event_type_field,
+            event_filters=event_filters,
+            default_filter_mode=pipeline.default_filter_mode,
+        )
 
     @classmethod
     def from_config(cls, rules_dicts: list[dict], mode: Literal["any", "all", "none"]) -> "FilterEngine":
-        rules = []
-        for raw in rules_dicts:
-            try:
-                rules.append(FilterRule(
-                    rule_id=raw["rule_id"],
-                    field=raw["field"],
-                    operator=raw["operator"],
-                    value=raw.get("value"),
-                ))
-            except KeyError as e:
-                raise ValueError(f"Filter rule missing required key: {e}") from e
-        return cls(rules, mode)
+        """Backwards-compatible factory for tests and simple use cases."""
+        return cls(global_filter=_FilterSet(mode=mode, rules=_parse_rules(rules_dicts)))
+
+    # ------------------------------------------------------------------
+    # Main entry point
+    # ------------------------------------------------------------------
 
     def should_forward(self, event: dict) -> tuple[bool, str]:
-        """Return (should_forward, reason) for the given event."""
-        if self._mode == "none" or not self._rules:
+        """Return (should_forward, reason_string) for the given event."""
+        if self._event_filters:
+            return self._route(event)
+        return self._apply_filter_set(self._global, event)
+
+    # ------------------------------------------------------------------
+    # Routing logic
+    # ------------------------------------------------------------------
+
+    def _route(self, event: dict) -> tuple[bool, str]:
+        raw_type = self._resolve_field(event, self._event_type_field)
+
+        if raw_type is _MISSING:
+            return self._apply_default(f"field_missing:{self._event_type_field}")
+
+        event_type = str(raw_type)
+        filter_set = self._event_filters.get(event_type)
+
+        if filter_set is None:
+            return self._apply_default(f"unknown_event_type:{event_type}")
+
+        result, reason = self._apply_filter_set(filter_set, event)
+        return result, f"event_type:{event_type}:{reason}"
+
+    def _apply_default(self, context: str) -> tuple[bool, str]:
+        if self._default_filter_mode == "drop":
+            return False, f"{context}:default_drop"
+        return True, f"{context}:default_forward"
+
+    # ------------------------------------------------------------------
+    # Filter set evaluation
+    # ------------------------------------------------------------------
+
+    def _apply_filter_set(self, fs: _FilterSet, event: dict) -> tuple[bool, str]:
+        if fs.mode == "drop":
+            return False, "drop"
+
+        if fs.mode == "none" or not fs.rules:
             return True, "no_filter"
 
-        results: list[tuple[bool, str]] = []
-        for rule in self._rules:
-            matched, detail = self._evaluate(rule, event)
-            results.append((matched, f"rule:{rule.rule_id}:{detail}"))
+        results = [(self._evaluate(rule, event), f"rule:{rule.rule_id}") for rule in fs.rules]
 
-        if self._mode == "any":
-            for matched, reason in results:
+        if fs.mode == "any":
+            for (matched, detail), label in results:
                 if matched:
-                    return True, reason
-            return False, f"no_rules_matched ({len(results)} rules checked)"
+                    return True, f"{label}:{detail}"
+            return False, f"no_rules_matched ({len(results)} checked)"
 
         # mode == "all"
-        for matched, reason in results:
+        for (matched, detail), label in results:
             if not matched:
-                return False, reason
+                return False, f"{label}:{detail}"
         return True, "all_rules_matched"
 
     def _evaluate(self, rule: FilterRule, event: dict) -> tuple[bool, str]:
@@ -120,7 +211,6 @@ class FilterEngine:
 
     @staticmethod
     def _resolve_field(event: dict, dotted_path: str) -> Any:
-        """Traverse nested dict using dot notation. Returns _MISSING if not found."""
         parts = dotted_path.split(".")
         current: Any = event
         for part in parts:
