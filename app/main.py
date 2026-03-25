@@ -265,8 +265,12 @@ async def ui(request: Request):
 async def auth_login(request: Request, next: str = "/ui"):
     if not auth_enabled():
         return RedirectResponse(next)
-    redirect_uri = str(request.base_url) + "auth/callback"
+    # Use the incoming request's host so it works on Cloud Shell, Cloud Run, or localhost
+    # Cloud Run terminates TLS externally so base_url may arrive as http — force https
+    base = str(request.base_url).rstrip("/").replace("http://", "https://")
+    redirect_uri = f"{base}/auth/callback"
     request.session["next"] = next
+    request.session["redirect_uri"] = redirect_uri
     return await get_oauth().google.authorize_redirect(request, redirect_uri)
 
 
