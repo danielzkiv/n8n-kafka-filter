@@ -9,9 +9,11 @@ from datetime import datetime, timezone
 
 import uvicorn
 from fastapi import FastAPI, Request
-from fastapi.responses import JSONResponse
+from fastapi.responses import FileResponse, JSONResponse
+from fastapi.staticfiles import StaticFiles
 
-from app.config import PipelineConfig, get_settings
+from app.config import EventFilterConfig, PipelineConfig, get_settings
+from app import filter_store
 from app.consumer import KafkaConsumerService
 from app.filter_engine import FilterEngine
 from app.logging_config import configure_logging
@@ -114,6 +116,8 @@ app = FastAPI(
     version="3.0.0",
     lifespan=lifespan,
 )
+
+app.mount("/static", StaticFiles(directory="app/static"), name="static")
 
 
 # ── HTTP ingest endpoint (Lambda → Cloud Run) ────────────────────────────────
@@ -233,6 +237,64 @@ async def metrics() -> JSONResponse:
         result["pipelines"][name] = stats
 
     return JSONResponse(result)
+
+
+# ── Config UI ────────────────────────────────────────────────────────────────
+
+@app.get("/ui")
+async def ui() -> FileResponse:
+    return FileResponse("app/static/index.html")
+
+
+@app.get("/api/pipelines")
+async def api_get_pipelines() -> JSONResponse:
+    """Return current filter config for all pipelines (no secrets)."""
+    stored = filter_store.load()
+    result = {}
+    for name, state in _pipelines.items():
+        saved = stored.get(name, {})
+        ef = saved.get("event_filters", {k: {"filter_mode": v.filter_mode, "filter_rules": v.filter_rules}
+                                            for k, v in state.config.event_filters.items()})
+        result[name] = {
+            "name": name,
+            "event_type_field":    saved.get("event_type_field",    state.config.event_type_field),
+            "default_filter_mode": saved.get("default_filter_mode", state.config.default_filter_mode),
+            "filter_mode":         saved.get("filter_mode",         state.config.filter_mode),
+            "filter_rules":        saved.get("filter_rules",        state.config.filter_rules),
+            "event_filters":       ef,
+        }
+    return JSONResponse(result)
+
+
+@app.put("/api/pipelines/{env}/filters")
+async def api_update_filters(env: str, request: Request) -> JSONResponse:
+    """Update filter config for a pipeline and hot-reload the filter engine."""
+    state = _pipelines.get(env)
+    if not state:
+        return JSONResponse({"error": f"Pipeline '{env}' not found"}, status_code=404)
+
+    try:
+        data = await request.json()
+    except Exception:
+        return JSONResponse({"error": "Invalid JSON"}, status_code=422)
+
+    # Persist to filter_config.json
+    filter_store.set_pipeline(env, data)
+
+    # Update the live pipeline config
+    state.config.filter_mode         = data.get("filter_mode", "none")
+    state.config.filter_rules        = data.get("filter_rules", [])
+    state.config.event_type_field    = data.get("event_type_field", "event_type")
+    state.config.default_filter_mode = data.get("default_filter_mode", "none")
+    state.config.event_filters       = {
+        k: EventFilterConfig(**v) for k, v in data.get("event_filters", {}).items()
+    }
+
+    # Hot-reload the filter engine
+    state.filter_engine = FilterEngine.from_pipeline(state.config)
+
+    logger.info("Filters updated via UI", extra={"env": env})
+    return JSONResponse({"status": "ok"})
 
 
 if __name__ == "__main__":
