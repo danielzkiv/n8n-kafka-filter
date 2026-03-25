@@ -9,11 +9,16 @@ from datetime import datetime, timezone
 
 import uvicorn
 from fastapi import FastAPI, Request
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import FileResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
+from starlette.middleware.sessions import SessionMiddleware
 
 from app.config import EventFilterConfig, PipelineConfig, get_settings
 from app import filter_store
+from app.auth import (
+    auth_enabled, get_session, get_oauth, is_allowed,
+    make_session_cookie, login_page, denied_page, SESSION_COOKIE,
+)
 from app.consumer import KafkaConsumerService
 from app.filter_engine import FilterEngine
 from app.logging_config import configure_logging
@@ -117,6 +122,8 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
+import os
+app.add_middleware(SessionMiddleware, secret_key=os.environ.get("SESSION_SECRET", "dev-secret-change-me"))
 app.mount("/static", StaticFiles(directory="app/static"), name="static")
 
 
@@ -243,8 +250,55 @@ async def metrics() -> JSONResponse:
 # ── Config UI ────────────────────────────────────────────────────────────────
 
 @app.get("/ui")
-async def ui() -> FileResponse:
+async def ui(request: Request):
+    if not auth_enabled():
+        return FileResponse("app/static/index.html")
+    session = get_session(request)
+    if not session:
+        return login_page()
+    if not is_allowed(session["email"]):
+        return denied_page(session["email"])
     return FileResponse("app/static/index.html")
+
+
+@app.get("/auth/login")
+async def auth_login(request: Request, next: str = "/ui"):
+    if not auth_enabled():
+        return RedirectResponse(next)
+    redirect_uri = str(request.base_url) + "auth/callback"
+    request.session["next"] = next
+    return await get_oauth().google.authorize_redirect(request, redirect_uri)
+
+
+@app.get("/auth/callback")
+async def auth_callback(request: Request):
+    token = await get_oauth().google.authorize_access_token(request)
+    user = token.get("userinfo")
+    if not user:
+        return JSONResponse({"error": "Failed to get user info"}, status_code=400)
+    email = user.get("email", "")
+    name = user.get("name", email)
+    next_url = request.session.pop("next", "/ui")
+    if not is_allowed(email):
+        return denied_page(email)
+    cookie = make_session_cookie(email, name)
+    response = RedirectResponse(next_url)
+    response.set_cookie(
+        SESSION_COOKIE, cookie,
+        max_age=8 * 3600,
+        httponly=True,
+        secure=True,
+        samesite="lax",
+    )
+    logger.info("User logged in", extra={"email": email})
+    return response
+
+
+@app.get("/auth/logout")
+async def auth_logout():
+    response = RedirectResponse("/ui")
+    response.delete_cookie(SESSION_COOKIE)
+    return response
 
 
 @app.get("/api/pipelines")
