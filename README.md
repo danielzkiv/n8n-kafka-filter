@@ -38,18 +38,15 @@ AWS MSK Kafka ──► Lambda handler ──► POST /ingest/{env} ──► Fi
 [
   {
     "name": "dev",
-    "n8n_webhook_url": "https://your-n8n.com/webhook/abc",
-    "n8n_webhook_secret": "optional-secret",
-    "ingest_secret": "shared-secret-for-lambda",
-    "kafka_bootstrap_servers": "broker1:9092,broker2:9092",
-    "kafka_topics": ["my-topic"],
-    "kafka_sasl_username": "user",
-    "kafka_sasl_password": "pass"
+    "kafka_bootstrap_servers": "b-1.your-cluster.kafka.us-east-1.amazonaws.com:9092",
+    "kafka_topics": ["your-topic-name"],
+    "kafka_security_protocol": "SASL_SSL",
+    "kafka_sasl_username": "your-username",
+    "kafka_sasl_password": "your-password",
+    "n8n_webhook_url": "https://your-n8n.com/webhook/abc"
   }
 ]
 ```
-
-Set `ingest_secret` to enable HTTP ingest (`/ingest/dev`). Omit `kafka_bootstrap_servers` for HTTP-only mode.
 
 ### All PIPELINES_JSON fields
 
