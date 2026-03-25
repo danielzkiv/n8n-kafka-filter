@@ -1,5 +1,6 @@
 .env
 .env.docker
+filter_config.json
 __pycache__/
 *.pyc
 *.pyo
