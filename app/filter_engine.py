@@ -35,6 +35,7 @@ class _FilterSet:
     """A self-contained filter: a mode + its rules."""
     mode: Literal["none", "any", "all", "drop"]
     rules: list[FilterRule] = field(default_factory=list)
+    disabled: bool = False
 
 
 def _parse_rules(rules_dicts: list[dict]) -> list[FilterRule]:
@@ -90,6 +91,7 @@ class FilterEngine:
             event_type: _FilterSet(
                 mode=ef.filter_mode,
                 rules=_parse_rules(ef.filter_rules),
+                disabled=ef.disabled,
             )
             for event_type, ef in pipeline.event_filters.items()
         }
@@ -130,6 +132,9 @@ class FilterEngine:
 
         if filter_set is None:
             return self._apply_default(f"unknown_event_type:{event_type}")
+
+        if filter_set.disabled:
+            return self._apply_default(f"event_type:{event_type}:disabled")
 
         result, reason = self._apply_filter_set(filter_set, event)
         return result, f"event_type:{event_type}:{reason}"

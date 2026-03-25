@@ -3,7 +3,8 @@
 # ── Local dev ────────────────────────────────────────────────────────────────
 
 up:
-	docker compose up --build -d
+	docker-compose build
+	docker-compose up -d
 	@echo ""
 	@echo "  Kafka UI   → http://localhost:8081"
 	@echo "  n8n        → http://localhost:5678"
@@ -12,19 +13,19 @@ up:
 	@echo "Run 'make logs' to follow forwarder logs"
 
 down:
-	docker compose down -v
+	docker-compose down -v
 
 restart:
-	docker compose restart forwarder
+	docker-compose restart forwarder
 
 logs:
-	docker compose logs -f forwarder
+	docker-compose logs -f forwarder
 
 logs-all:
-	docker compose logs -f
+	docker-compose logs -f
 
 build:
-	docker compose build forwarder
+	docker-compose build forwarder
 
 health:
 	curl -s http://localhost:8080/health | python -m json.tool
@@ -57,7 +58,7 @@ test-cov:
 # ── Kafka shell ───────────────────────────────────────────────────────────────
 
 shell-kafka:
-	docker compose exec kafka bash
+	docker-compose exec kafka bash
 
 topics:
-	docker compose exec kafka kafka-topics.sh --bootstrap-server localhost:9092 --list
+	docker-compose exec kafka kafka-topics.sh --bootstrap-server localhost:9092 --list

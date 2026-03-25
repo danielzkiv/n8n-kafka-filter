@@ -15,6 +15,7 @@ class EventFilterConfig(BaseModel):
     # "all"   — forward only if every rule matches
     filter_mode: Literal["none", "any", "all", "drop"] = "none"
     filter_rules: list[dict] = []
+    disabled: bool = False  # when True, falls through to default_filter_mode
 
 
 class PipelineConfig(BaseModel):
@@ -95,7 +96,7 @@ class PipelineConfig(BaseModel):
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(
         env_file=".env",
-        env_file_encoding="utf-8",
+        env_file_encoding="utf-8-sig",  # handles Windows BOM
         case_sensitive=False,
     )
 

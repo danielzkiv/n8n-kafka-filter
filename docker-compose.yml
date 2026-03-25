@@ -1,38 +1,6 @@
+version: "3.8"
+
 services:
-
-  # ── Kafka (KRaft — no Zookeeper) ────────────────────────────────────────────
-  kafka:
-    image: bitnami/kafka:3.7
-    ports:
-      - "9093:9093"   # Host machine access (for test producer script)
-    environment:
-      - KAFKA_CFG_NODE_ID=1
-      - KAFKA_CFG_PROCESS_ROLES=broker,controller
-      - KAFKA_CFG_CONTROLLER_QUORUM_VOTERS=1@kafka:9094
-      # Internal listener for containers, external for host machine
-      - KAFKA_CFG_LISTENERS=PLAINTEXT://:9092,EXTERNAL://:9093,CONTROLLER://:9094
-      - KAFKA_CFG_ADVERTISED_LISTENERS=PLAINTEXT://kafka:9092,EXTERNAL://localhost:9093
-      - KAFKA_CFG_LISTENER_SECURITY_PROTOCOL_MAP=PLAINTEXT:PLAINTEXT,EXTERNAL:PLAINTEXT,CONTROLLER:PLAINTEXT
-      - KAFKA_CFG_CONTROLLER_LISTENER_NAMES=CONTROLLER
-      - KAFKA_CFG_AUTO_CREATE_TOPICS_ENABLE=true
-      - ALLOW_PLAINTEXT_LISTENER=yes
-    healthcheck:
-      test: ["CMD", "kafka-topics.sh", "--bootstrap-server", "localhost:9092", "--list"]
-      interval: 10s
-      timeout: 5s
-      retries: 10
-
-  # ── Kafka UI — browse topics and messages at http://localhost:8081 ───────────
-  kafka-ui:
-    image: provectuslabs/kafka-ui:latest
-    ports:
-      - "8081:8080"
-    environment:
-      - KAFKA_CLUSTERS_0_NAME=local
-      - KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS=kafka:9092
-    depends_on:
-      kafka:
-        condition: service_healthy
 
   # ── n8n — workflow automation at http://localhost:5678 ──────────────────────
   n8n:
@@ -55,8 +23,7 @@ services:
     env_file:
       - .env.docker
     depends_on:
-      kafka:
-        condition: service_healthy
+      - n8n
     restart: on-failure
 
 volumes:

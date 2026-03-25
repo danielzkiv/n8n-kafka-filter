@@ -3,24 +3,50 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>n8n Kafka Filter — Config</title>
+  <title>n8n Kafka Filter</title>
   <script src="https://cdn.tailwindcss.com"></script>
+  <style>
+    .slide-down { animation: slideDown 0.15s ease-out; }
+    @keyframes slideDown { from { opacity:0; transform:translateY(-6px) } to { opacity:1; transform:translateY(0) } }
+  </style>
 </head>
-<body class="bg-gray-50 min-h-screen">
+<body class="bg-gray-50 min-h-screen text-gray-800">
 <div class="max-w-3xl mx-auto px-4 py-8">
 
   <!-- Header -->
-  <div class="mb-6">
-    <h1 class="text-xl font-bold text-gray-900">n8n Kafka Filter</h1>
-    <p class="text-sm text-gray-400 mt-0.5">Configure event filters per pipeline</p>
+  <div class="flex items-center justify-between mb-6">
+    <div>
+      <h1 class="text-xl font-bold">n8n Kafka Filter</h1>
+      <p class="text-xs text-gray-400 mt-0.5">Event filter configuration</p>
+    </div>
+    <span id="save-badge" class="hidden text-xs font-medium bg-green-100 text-green-700 px-3 py-1 rounded-full">✓ Saved</span>
   </div>
 
   <!-- Pipeline tabs -->
   <div id="tabs" class="flex gap-2 mb-6"></div>
 
-  <!-- Content -->
-  <div id="content" class="bg-white rounded-xl border shadow-sm p-6 text-gray-400 text-sm">Loading...</div>
+  <!-- Panel -->
+  <div id="panel" class="space-y-4">
+    <div class="bg-white rounded-xl border p-6 text-gray-400 text-sm text-center">Loading...</div>
+  </div>
 
+</div>
+
+<!-- Edit modal -->
+<div id="modal" class="hidden fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4">
+  <div class="bg-white rounded-2xl shadow-xl w-full max-w-lg max-h-[90vh] overflow-y-auto">
+    <div class="p-6">
+      <div class="flex items-center justify-between mb-4">
+        <h2 class="font-semibold text-lg" id="modal-title">Edit filter</h2>
+        <button onclick="closeModal()" class="text-gray-400 hover:text-gray-600 text-2xl leading-none">&times;</button>
+      </div>
+      <div id="modal-body"></div>
+      <div class="flex gap-2 mt-5 pt-4 border-t">
+        <button onclick="saveModal()" class="flex-1 bg-blue-600 text-white py-2 rounded-lg text-sm font-medium hover:bg-blue-700">Save</button>
+        <button onclick="closeModal()" class="px-4 py-2 border rounded-lg text-sm text-gray-600 hover:bg-gray-50">Cancel</button>
+      </div>
+    </div>
+  </div>
 </div>
 
 <script>
@@ -29,8 +55,9 @@ const EVENT_MODES = ['none','any','all','drop'];
 
 let pipelines = {};
 let active = null;
+let editingKey = null; // event type being edited in modal
 
-// ── Load ─────────────────────────────────────────────────────────────────────
+// ── Bootstrap ─────────────────────────────────────────────────────────────────
 
 async function load() {
   const r = await fetch('/api/pipelines');
@@ -38,7 +65,7 @@ async function load() {
   const names = Object.keys(pipelines);
   if (!active && names.length) active = names[0];
   renderTabs(names);
-  renderPipeline();
+  renderPanel();
 }
 
 // ── Tabs ──────────────────────────────────────────────────────────────────────
@@ -47,7 +74,7 @@ function renderTabs(names) {
   document.getElementById('tabs').innerHTML = names.map(n => `
     <button onclick="selectPipeline('${n}')"
       class="px-4 py-1.5 rounded-lg text-sm font-medium border transition-colors
-        ${active === n ? 'bg-blue-600 text-white border-blue-600' : 'bg-white text-gray-600 hover:bg-gray-50'}">
+        ${active===n ? 'bg-blue-600 text-white border-blue-600' : 'bg-white text-gray-600 hover:bg-gray-50'}">
       ${n}
     </button>`).join('');
 }
@@ -55,186 +82,266 @@ function renderTabs(names) {
 function selectPipeline(name) {
   active = name;
   renderTabs(Object.keys(pipelines));
-  renderPipeline();
+  renderPanel();
 }
 
-// ── Main render ───────────────────────────────────────────────────────────────
+// ── Panel ─────────────────────────────────────────────────────────────────────
 
-function renderPipeline() {
+function renderPanel() {
   const p = pipelines[active];
   if (!p) return;
   const ef = p.event_filters || {};
+  const entries = Object.entries(ef);
 
-  document.getElementById('content').innerHTML = `
-    <div class="space-y-6">
+  document.getElementById('panel').innerHTML = `
 
-      <!-- Basic settings -->
-      <div class="grid grid-cols-2 gap-4">
-        <div>
-          <label class="block text-xs font-semibold text-gray-500 uppercase mb-1">Event type field</label>
-          <input id="etf" value="${p.event_type_field || 'event_type'}"
-            class="w-full border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400"
-            placeholder="event_type">
-          <p class="text-xs text-gray-400 mt-1">Field in the event JSON that holds the event type name</p>
-        </div>
-        <div>
-          <label class="block text-xs font-semibold text-gray-500 uppercase mb-1">Default action (unknown types)</label>
-          <select id="dfm" class="w-full border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400">
-            <option value="none" ${(p.default_filter_mode||'none')==='none'?'selected':''}>Forward (pass through)</option>
-            <option value="drop" ${p.default_filter_mode==='drop'?'selected':''}>Drop (discard)</option>
-          </select>
-          <p class="text-xs text-gray-400 mt-1">What to do with event types not listed below</p>
-        </div>
+    <!-- Settings row -->
+    <div class="bg-white rounded-xl border p-4 flex gap-4 items-end">
+      <div class="flex-1">
+        <label class="block text-xs font-semibold text-gray-500 mb-1">Event type field</label>
+        <input id="etf" value="${p.event_type_field||'event_type'}"
+          class="w-full border rounded-lg px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400"
+          placeholder="event_type" onchange="autoSave()">
       </div>
-
-      <!-- Event type filters -->
-      <div>
-        <div class="flex items-center justify-between mb-3">
-          <div>
-            <h2 class="text-xs font-semibold text-gray-500 uppercase">Event Type Filters</h2>
-            <p class="text-xs text-gray-400">Each event type can have its own filter rules</p>
-          </div>
-          <button onclick="addEventType()"
-            class="text-xs font-medium text-blue-600 hover:text-blue-800 border border-blue-200 px-3 py-1 rounded-lg hover:bg-blue-50">
-            + Add event type
-          </button>
-        </div>
-
-        <div id="et-list" class="space-y-3">
-          ${Object.keys(ef).length === 0
-            ? `<div class="text-center py-10 border-2 border-dashed rounded-xl text-gray-300 text-sm">
-                No event type filters yet.<br>
-                <span class="text-xs">Add one above, or use the global filter below.</span>
-               </div>`
-            : Object.entries(ef).map(([et, cfg]) => eventTypeBlock(et, cfg)).join('')}
-        </div>
-      </div>
-
-      <!-- Global filter (shown only when no event type filters) -->
-      ${Object.keys(ef).length === 0 ? `
-      <div id="global-section">
-        <h2 class="text-xs font-semibold text-gray-500 uppercase mb-1">Global Filter</h2>
-        <p class="text-xs text-gray-400 mb-3">Applied to all events when no event type filters are defined.</p>
-        <div class="flex items-center gap-3 mb-3">
-          <label class="text-sm text-gray-600 w-12">Mode</label>
-          <select id="gfm" class="border rounded-lg px-3 py-1.5 text-sm">
-            ${['none','any','all'].map(m=>`<option value="${m}" ${(p.filter_mode||'none')===m?'selected':''}>${m}</option>`).join('')}
-          </select>
-        </div>
-        <div id="global-rules" class="space-y-2">
-          ${(p.filter_rules||[]).map(ruleRow).join('')}
-        </div>
-        <button onclick="addGlobalRule()" class="mt-2 text-xs text-blue-600 hover:text-blue-800">+ Add rule</button>
-      </div>` : ''}
-
-      <!-- Save -->
-      <div class="flex items-center gap-3 pt-4 border-t">
-        <button onclick="save()"
-          class="bg-blue-600 text-white px-5 py-2 rounded-lg text-sm font-medium hover:bg-blue-700 transition-colors">
-          Save changes
-        </button>
-        <span id="status" class="text-sm"></span>
-      </div>
-
-    </div>`;
-}
-
-// ── Event type block ──────────────────────────────────────────────────────────
-
-function eventTypeBlock(et, cfg) {
-  return `
-    <div class="border rounded-xl p-4 bg-gray-50" data-et>
-      <div class="flex items-center gap-2 mb-3">
-        <input class="et-name border rounded-lg px-2 py-1 text-sm font-mono flex-1 bg-white"
-          value="${et}" placeholder="order.created">
-        <select class="et-mode border rounded-lg px-2 py-1.5 text-sm bg-white">
-          ${EVENT_MODES.map(m=>`<option value="${m}" ${cfg.filter_mode===m?'selected':''}>${m}</option>`).join('')}
+      <div class="w-52">
+        <label class="block text-xs font-semibold text-gray-500 mb-1">Unknown event types</label>
+        <select id="dfm" class="w-full border rounded-lg px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400" onchange="autoSave()">
+          <option value="none" ${(p.default_filter_mode||'none')==='none'?'selected':''}>Forward (pass through)</option>
+          <option value="drop" ${p.default_filter_mode==='drop'?'selected':''}>Drop (discard)</option>
         </select>
-        <button onclick="this.closest('[data-et]').remove()"
-          class="text-red-400 hover:text-red-600 text-lg w-6 text-center leading-none">&times;</button>
       </div>
-      <div class="rules space-y-2">
-        ${(cfg.filter_rules||[]).map(ruleRow).join('')}
+    </div>
+
+    <!-- Event types list -->
+    <div class="bg-white rounded-xl border overflow-hidden">
+      <div class="flex items-center justify-between px-4 py-3 border-b bg-gray-50">
+        <span class="text-xs font-semibold text-gray-500 uppercase tracking-wide">
+          Event Type Filters
+          <span class="ml-1 text-gray-400 font-normal normal-case">${entries.length} configured</span>
+        </span>
+        <button onclick="openAddModal()"
+          class="text-xs font-medium text-blue-600 hover:text-blue-800 border border-blue-200 bg-blue-50 px-3 py-1 rounded-lg hover:bg-blue-100 transition-colors">
+          + Add event type
+        </button>
       </div>
-      <button onclick="addRuleTo(this.previousElementSibling)"
-        class="mt-2 text-xs text-blue-600 hover:text-blue-800">+ Add rule</button>
+
+      ${entries.length === 0 ? `
+        <div class="text-center py-12 text-gray-300">
+          <div class="text-4xl mb-2">⚙</div>
+          <div class="text-sm">No event type filters configured</div>
+          <div class="text-xs mt-1">All events will be ${p.default_filter_mode==='drop'?'dropped':'forwarded'} by default</div>
+        </div>` :
+
+        entries.map(([et, cfg]) => `
+        <div class="flex items-center gap-3 px-4 py-3 border-b last:border-b-0 hover:bg-gray-50 transition-colors group">
+
+          <!-- Status dot -->
+          <div class="w-2 h-2 rounded-full flex-shrink-0 ${cfg.disabled ? 'bg-gray-300' : modeDot(cfg.filter_mode)}"></div>
+
+          <!-- Event type name -->
+          <div class="flex-1 min-w-0">
+            <div class="flex items-center gap-2">
+              <span class="text-sm font-mono font-medium ${cfg.disabled?'text-gray-400 line-through':''}">${et}</span>
+              ${cfg.disabled ? '<span class="text-xs bg-gray-100 text-gray-400 px-1.5 py-0.5 rounded">off</span>' : ''}
+            </div>
+            <div class="text-xs text-gray-400 mt-0.5">
+              ${modeBadge(cfg.filter_mode)}
+              ${(cfg.filter_rules||[]).length > 0
+                ? ` &middot; ${cfg.filter_rules.length} rule${cfg.filter_rules.length!==1?'s':''}`
+                : ''}
+            </div>
+          </div>
+
+          <!-- Actions -->
+          <div class="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+            <button onclick="openEditModal('${et}')"
+              class="text-xs px-2.5 py-1 rounded-lg border hover:bg-blue-50 hover:border-blue-200 hover:text-blue-600 transition-colors">
+              Edit
+            </button>
+            <button onclick="toggleDisabled('${et}')"
+              class="text-xs px-2.5 py-1 rounded-lg border hover:bg-yellow-50 hover:border-yellow-200 hover:text-yellow-600 transition-colors">
+              ${cfg.disabled ? 'Enable' : 'Disable'}
+            </button>
+            <button onclick="deleteEventType('${et}')"
+              class="text-xs px-2.5 py-1 rounded-lg border hover:bg-red-50 hover:border-red-200 hover:text-red-500 transition-colors">
+              Delete
+            </button>
+          </div>
+
+        </div>`).join('')
+      }
+    </div>
+
+    ${entries.length === 0 ? globalFilterSection(p) : ''}
+  `;
+}
+
+function modeDot(mode) {
+  return {none:'bg-green-400', any:'bg-blue-400', all:'bg-purple-400', drop:'bg-red-400'}[mode] || 'bg-gray-300';
+}
+function modeBadge(mode) {
+  const labels = {none:'forward all', any:'forward if any rule matches', all:'forward if all rules match', drop:'always drop'};
+  return labels[mode] || mode;
+}
+
+function globalFilterSection(p) {
+  return `
+    <div class="bg-white rounded-xl border p-4">
+      <div class="flex items-center justify-between mb-3">
+        <div>
+          <div class="text-xs font-semibold text-gray-500 uppercase">Global Filter</div>
+          <div class="text-xs text-gray-400">Applied when no event type filters are configured</div>
+        </div>
+        <select id="gfm" class="border rounded-lg px-2 py-1 text-sm" onchange="autoSave()">
+          ${['none','any','all'].map(m=>`<option value="${m}" ${(p.filter_mode||'none')===m?'selected':''}>${m}</option>`).join('')}
+        </select>
+      </div>
+      <div id="global-rules" class="space-y-2">
+        ${(p.filter_rules||[]).map(ruleRow).join('')}
+      </div>
+      <button onclick="addGlobalRule()" class="mt-2 text-xs text-blue-600 hover:text-blue-800">+ Add rule</button>
     </div>`;
 }
 
-function addEventType() {
-  const list = document.getElementById('et-list');
-  // Remove empty state if present
-  const empty = list.querySelector('.border-dashed');
-  if (empty) empty.remove();
-  // Remove global section if visible (now using event-type mode)
-  const global = document.getElementById('global-section');
-  if (global) global.remove();
+// ── Quick actions ─────────────────────────────────────────────────────────────
 
-  const div = document.createElement('div');
-  div.className = 'border rounded-xl p-4 bg-gray-50';
-  div.setAttribute('data-et', '');
-  div.innerHTML = `
-    <div class="flex items-center gap-2 mb-3">
-      <input class="et-name border rounded-lg px-2 py-1 text-sm font-mono flex-1 bg-white" value="" placeholder="order.created">
-      <select class="et-mode border rounded-lg px-2 py-1.5 text-sm bg-white">
-        ${EVENT_MODES.map(m=>`<option value="${m}">${m}</option>`).join('')}
-      </select>
-      <button onclick="this.closest('[data-et]').remove()"
-        class="text-red-400 hover:text-red-600 text-lg w-6 text-center leading-none">&times;</button>
-    </div>
-    <div class="rules space-y-2"></div>
-    <button onclick="addRuleTo(this.previousElementSibling)" class="mt-2 text-xs text-blue-600 hover:text-blue-800">+ Add rule</button>`;
-  list.appendChild(div);
-  div.querySelector('.et-name').focus();
+function toggleDisabled(et) {
+  const ef = pipelines[active].event_filters || {};
+  ef[et].disabled = !ef[et].disabled;
+  pipelines[active].event_filters = ef;
+  renderPanel();
+  save();
+}
+
+function deleteEventType(et) {
+  if (!confirm(`Delete filter for "${et}"?`)) return;
+  const ef = pipelines[active].event_filters || {};
+  delete ef[et];
+  pipelines[active].event_filters = ef;
+  renderPanel();
+  save();
+}
+
+// ── Modal ─────────────────────────────────────────────────────────────────────
+
+function openAddModal() {
+  editingKey = null;
+  document.getElementById('modal-title').textContent = 'Add event type filter';
+  document.getElementById('modal-body').innerHTML = modalBody('', {filter_mode:'none', filter_rules:[], disabled:false});
+  document.getElementById('modal').classList.remove('hidden');
+}
+
+function openEditModal(et) {
+  editingKey = et;
+  const cfg = (pipelines[active].event_filters || {})[et] || {};
+  document.getElementById('modal-title').textContent = `Edit: ${et}`;
+  document.getElementById('modal-body').innerHTML = modalBody(et, cfg);
+  document.getElementById('modal').classList.remove('hidden');
+}
+
+function closeModal() {
+  document.getElementById('modal').classList.add('hidden');
+  editingKey = null;
+}
+
+function modalBody(et, cfg) {
+  return `
+    <div class="space-y-4">
+      <div>
+        <label class="block text-xs font-semibold text-gray-500 mb-1">Event type name</label>
+        <input id="m-et" value="${et}" placeholder="order.created"
+          class="w-full border rounded-lg px-3 py-2 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-blue-400">
+      </div>
+      <div>
+        <label class="block text-xs font-semibold text-gray-500 mb-1">Mode</label>
+        <div class="grid grid-cols-4 gap-2">
+          ${EVENT_MODES.map(m => `
+            <label class="flex items-center justify-center border rounded-lg py-2 text-sm cursor-pointer transition-colors
+              ${cfg.filter_mode===m ? 'bg-blue-600 text-white border-blue-600' : 'hover:bg-gray-50'}">
+              <input type="radio" name="m-mode" value="${m}" ${cfg.filter_mode===m?'checked':''} class="hidden"
+                onchange="document.querySelectorAll('[name=m-mode]').forEach(r=>r.parentElement.className=r.parentElement.className.replace('bg-blue-600 text-white border-blue-600','hover:bg-gray-50'));this.parentElement.className=this.parentElement.className.replace('hover:bg-gray-50','bg-blue-600 text-white border-blue-600'))">
+              ${m}
+            </label>`).join('')}
+        </div>
+        <p class="text-xs text-gray-400 mt-1">${modeDesc()}</p>
+      </div>
+      <div id="rules-section" class="${(cfg.filter_mode||'none')==='drop'||(cfg.filter_mode||'none')==='none' ? 'opacity-50 pointer-events-none' : ''}">
+        <label class="block text-xs font-semibold text-gray-500 mb-2">Filter rules</label>
+        <div id="m-rules" class="space-y-2">
+          ${(cfg.filter_rules||[]).map(ruleRow).join('')}
+        </div>
+        <button onclick="addModalRule()" class="mt-2 text-xs text-blue-600 hover:text-blue-800">+ Add rule</button>
+      </div>
+    </div>`;
+}
+
+function modeDesc() {
+  return 'none = forward all &middot; any = forward if ≥1 rule matches &middot; all = forward if all rules match &middot; drop = always discard';
+}
+
+function saveModal() {
+  const et = document.getElementById('m-et').value.trim();
+  if (!et) { alert('Event type name is required'); return; }
+
+  const modeEl = document.querySelector('input[name="m-mode"]:checked');
+  const mode = modeEl ? modeEl.value : 'none';
+  const rulesEl = document.getElementById('m-rules');
+  const rules = rulesEl ? collectRules(rulesEl) : [];
+
+  const ef = pipelines[active].event_filters || {};
+
+  // If renaming, remove old key
+  if (editingKey && editingKey !== et) delete ef[editingKey];
+
+  ef[et] = { filter_mode: mode, filter_rules: rules, disabled: ef[et]?.disabled || false };
+  pipelines[active].event_filters = ef;
+
+  closeModal();
+  renderPanel();
+  save();
+}
+
+function addModalRule() {
+  document.getElementById('m-rules').appendChild(newRuleEl());
 }
 
 // ── Rules ─────────────────────────────────────────────────────────────────────
 
 function ruleRow(r) {
-  const val = r.value === null || r.value === undefined ? '' : JSON.stringify(r.value).replace(/^"|"$/g,'');
+  const val = r.value === null || r.value === undefined ? '' : String(r.value);
   return `
-    <div class="rule flex items-center gap-2">
-      <input class="r-id border rounded px-2 py-1 text-xs text-gray-400 w-24 bg-white" value="${r.rule_id||''}" placeholder="id">
-      <input class="r-field border rounded px-2 py-1 text-sm flex-1 bg-white" value="${r.field||''}" placeholder="field.path">
-      <select class="r-op border rounded px-2 py-1 text-sm bg-white">
+    <div class="rule flex items-center gap-1.5">
+      <input class="r-id border rounded px-2 py-1 text-xs text-gray-400 w-20" value="${r.rule_id||''}" placeholder="id">
+      <input class="r-field border rounded px-2 py-1 text-sm flex-1" value="${r.field||''}" placeholder="field.path">
+      <select class="r-op border rounded px-2 py-1 text-sm">
         ${OPERATORS.map(op=>`<option value="${op}" ${r.operator===op?'selected':''}>${op}</option>`).join('')}
       </select>
-      <input class="r-val border rounded px-2 py-1 text-sm w-28 bg-white" value="${val}" placeholder="value">
-      <button onclick="this.closest('.rule').remove()" class="text-red-400 hover:text-red-600">&times;</button>
+      <input class="r-val border rounded px-2 py-1 text-sm w-24" value="${val}" placeholder="value">
+      <button onclick="this.closest('.rule').remove()" class="text-red-400 hover:text-red-600 w-5 text-center">&times;</button>
     </div>`;
 }
 
-function newRuleRow() {
-  const div = document.createElement('div');
-  div.className = 'rule flex items-center gap-2';
-  div.innerHTML = `
-    <input class="r-id border rounded px-2 py-1 text-xs text-gray-400 w-24 bg-white" value="" placeholder="id">
-    <input class="r-field border rounded px-2 py-1 text-sm flex-1 bg-white" value="" placeholder="field.path">
-    <select class="r-op border rounded px-2 py-1 text-sm bg-white">
-      ${OPERATORS.map(op=>`<option value="${op}">${op}</option>`).join('')}
+function newRuleEl() {
+  const d = document.createElement('div');
+  d.className = 'rule flex items-center gap-1.5';
+  d.innerHTML = `
+    <input class="r-id border rounded px-2 py-1 text-xs text-gray-400 w-20" placeholder="id">
+    <input class="r-field border rounded px-2 py-1 text-sm flex-1" placeholder="field.path">
+    <select class="r-op border rounded px-2 py-1 text-sm">
+      ${OPERATORS.map(op=>`<option>${op}</option>`).join('')}
     </select>
-    <input class="r-val border rounded px-2 py-1 text-sm w-28 bg-white" value="" placeholder="value">
-    <button onclick="this.closest('.rule').remove()" class="text-red-400 hover:text-red-600">&times;</button>`;
-  return div;
+    <input class="r-val border rounded px-2 py-1 text-sm w-24" placeholder="value">
+    <button onclick="this.closest('.rule').remove()" class="text-red-400 hover:text-red-600 w-5 text-center">&times;</button>`;
+  return d;
 }
-
-function addRuleTo(container) {
-  container.appendChild(newRuleRow());
-}
-
-function addGlobalRule() {
-  document.getElementById('global-rules').appendChild(newRuleRow());
-}
-
-// ── Collect & save ────────────────────────────────────────────────────────────
 
 function collectRules(container) {
   return Array.from(container.querySelectorAll('.rule')).map(row => {
-    const rawVal = row.querySelector('.r-val').value.trim();
+    const raw = row.querySelector('.r-val').value.trim();
     let value;
-    try { value = JSON.parse(rawVal); } catch { value = rawVal || null; }
+    try { value = JSON.parse(raw); } catch { value = raw || null; }
     return {
-      rule_id: row.querySelector('.r-id').value || ('r-' + Math.random().toString(36).slice(2,7)),
+      rule_id:  row.querySelector('.r-id').value   || ('r-' + Math.random().toString(36).slice(2,7)),
       field:    row.querySelector('.r-field').value.trim(),
       operator: row.querySelector('.r-op').value,
       value,
@@ -242,53 +349,47 @@ function collectRules(container) {
   }).filter(r => r.field);
 }
 
+function addGlobalRule() {
+  const c = document.getElementById('global-rules');
+  if (c) c.appendChild(newRuleEl());
+}
+
+// ── Save ──────────────────────────────────────────────────────────────────────
+
+function autoSave() { save(); }
+
 async function save() {
-  const status = document.getElementById('status');
-
-  // Event type filters
-  const event_filters = {};
-  document.querySelectorAll('[data-et]').forEach(block => {
-    const et = block.querySelector('.et-name').value.trim();
-    if (!et) return;
-    event_filters[et] = {
-      filter_mode: block.querySelector('.et-mode').value,
-      filter_rules: collectRules(block.querySelector('.rules')),
-    };
-  });
-
-  // Global filter
+  const p = pipelines[active];
   const gfmEl = document.getElementById('gfm');
   const grEl  = document.getElementById('global-rules');
 
   const payload = {
-    event_type_field:    document.getElementById('etf').value.trim() || 'event_type',
-    default_filter_mode: document.getElementById('dfm').value,
-    event_filters,
-    filter_mode:  gfmEl ? gfmEl.value : 'none',
-    filter_rules: grEl  ? collectRules(grEl) : [],
+    event_type_field:    (document.getElementById('etf')?.value || p.event_type_field || 'event_type').trim(),
+    default_filter_mode: document.getElementById('dfm')?.value || p.default_filter_mode || 'none',
+    event_filters:       p.event_filters || {},
+    filter_mode:         gfmEl ? gfmEl.value : (p.filter_mode || 'none'),
+    filter_rules:        grEl  ? collectRules(grEl) : (p.filter_rules || []),
   };
 
-  try {
-    const r = await fetch(`/api/pipelines/${active}/filters`, {
-      method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(payload),
-    });
-    const res = await r.json();
-    if (r.ok) {
-      pipelines[active] = { ...pipelines[active], ...payload };
-      status.textContent = '✓ Saved';
-      status.className = 'text-sm text-green-600 font-medium';
-      setTimeout(() => { status.textContent = ''; }, 2000);
-    } else {
-      status.textContent = '✗ ' + (res.error || 'Error');
-      status.className = 'text-sm text-red-500';
-    }
-  } catch {
-    status.textContent = '✗ Network error';
-    status.className = 'text-sm text-red-500';
+  pipelines[active] = { ...p, ...payload };
+
+  const r = await fetch(`/api/pipelines/${active}/filters`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  });
+
+  const badge = document.getElementById('save-badge');
+  if (r.ok) {
+    badge.classList.remove('hidden');
+    setTimeout(() => badge.classList.add('hidden'), 2000);
   }
 }
+
+// Close modal on backdrop click
+document.getElementById('modal').addEventListener('click', e => {
+  if (e.target === e.currentTarget) closeModal();
+});
 
 load();
 </script>
