@@ -51,6 +51,53 @@ AWS MSK Kafka ──► Lambda handler ──► POST /ingest/{env} ──► Fi
 
 Set `ingest_secret` to enable HTTP ingest (`/ingest/dev`). Omit `kafka_bootstrap_servers` for HTTP-only mode.
 
+### All PIPELINES_JSON fields
+
+`PIPELINES_JSON` is a JSON array — one object per environment (dev, stage, prod). Each object is one pipeline: one Kafka connection, one n8n webhook, one set of filter rules.
+
+**Required:**
+
+| Field | Description |
+|---|---|
+| `name` | Pipeline name — must be unique. Used in logs, metrics, and the `/ingest/{name}` URL. Example: `"dev"` |
+| `n8n_webhook_url` | Full URL of the n8n webhook to forward events to |
+
+**Kafka connection** (needed when connecting directly to Kafka over VPN):
+
+| Field | Default | Description |
+|---|---|---|
+| `kafka_bootstrap_servers` | — | Comma-separated broker addresses. Example: `"b-1.cluster.kafka.amazonaws.com:9092"` |
+| `kafka_topics` | — | Topic name(s) to consume. Example: `["my-topic"]` |
+| `kafka_consumer_group_id` | `"kafka-n8n-forwarder"` | Kafka consumer group ID |
+| `kafka_security_protocol` | `"SASL_SSL"` | `PLAINTEXT`, `SSL`, `SASL_PLAINTEXT`, or `SASL_SSL` |
+| `kafka_sasl_mechanism` | `"PLAIN"` | `PLAIN`, `SCRAM-SHA-256`, or `SCRAM-SHA-512` |
+| `kafka_sasl_username` | — | Kafka username (omit if no auth) |
+| `kafka_sasl_password` | — | Kafka password |
+| `kafka_auto_offset_reset` | `"earliest"` | Where to start reading: `"earliest"` or `"latest"` |
+
+**Webhook delivery:**
+
+| Field | Default | Description |
+|---|---|---|
+| `n8n_webhook_secret` | — | Sent as `X-Webhook-Secret` header to n8n |
+| `webhook_timeout_seconds` | `10` | How long to wait for n8n to respond |
+| `webhook_max_retries` | `3` | Retry attempts on network errors or 5xx responses |
+| `webhook_retry_backoff_seconds` | `2.0` | Seconds between retries (doubles each attempt, max 30s) |
+
+**Filtering:**
+
+| Field | Default | Description |
+|---|---|---|
+| `event_type_field` | `"event_type"` | Which field in the event body identifies its type |
+| `event_filters` | `{}` | Filter rules per event type — managed via the `/ui` |
+
+**Other:**
+
+| Field | Default | Description |
+|---|---|---|
+| `ingest_secret` | — | Enables the `/ingest/{name}` HTTP endpoint. Any POST must include this as `X-Ingest-Secret` header |
+| `dlq_topic` | — | Kafka topic to write failed events to after all retries are exhausted |
+
 ---
 
 ## Filter UI
