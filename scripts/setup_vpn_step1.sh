@@ -14,12 +14,12 @@
 
 set -euo pipefail
 
-# ── Config — fill these in ───────────────────────────────────────────────────
-PROJECT_ID="YOUR_GCP_PROJECT_ID"
+# ── Config ───────────────────────────────────────────────────────────────────
+PROJECT_ID="bdi-apps-491216"
 REGION="us-central1"
 NETWORK="default"
-AWS_VPC_CIDR="10.0.0.0/16"          # CIDR of the AWS VPC where MSK lives
-VPC_CONNECTOR_CIDR="10.8.0.0/28"    # Unused /28 in your GCP network for the connector
+AWS_VPC_CIDR="FILL_IN_AWS_VPC_CIDR"  # Ask AWS team — e.g. 10.0.0.0/16
+VPC_CONNECTOR_CIDR="10.8.0.0/28"     # Unused /28 in GCP network for the connector
 # ─────────────────────────────────────────────────────────────────────────────
 
 echo "==> Setting project to $PROJECT_ID"

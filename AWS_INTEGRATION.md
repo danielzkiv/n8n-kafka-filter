@@ -6,111 +6,92 @@ Cloud Run connects **directly to MSK Kafka** over a Site-to-Site VPN between GCP
 MSK Kafka (AWS VPC) ──VPN tunnel──► GCP VPC ──VPC Connector──► Cloud Run ──► Filter ──► n8n
 ```
 
-The setup is split into steps because both teams need to exchange information mid-way.
+Scripts are pre-filled with GCP project values. Follow the steps below in order.
 
 ---
 
-## What we need from AWS team first
+## Step 1 — Ask AWS team for this info
 
-Before anything can start, ask the AWS team to provide:
+Before running anything, get these values from the AWS team:
 
 | Info needed | Example |
 |---|---|
 | AWS VPC CIDR | `10.0.0.0/16` |
 | MSK broker endpoints (private DNS) | `b-1.cluster-xxx.kafka.us-east-1.amazonaws.com:9092` |
-| Kafka security protocol | `PLAINTEXT`, `SSL`, `SASL_SSL` |
+| Kafka security protocol | `PLAINTEXT`, `SSL`, or `SASL_SSL` |
 | Kafka SASL username + password | (if using SASL auth) |
 | Kafka topic name(s) | `my-events-topic` |
 
 ---
 
-## Step 1 — GCP Team (us): Set up VPN gateway
+## Step 2 — GCP Team: Run VPN setup step 1
 
-1. Open `scripts/setup_vpn_step1.sh` and fill in the top variables:
-   ```bash
-   PROJECT_ID="bdi-apps-491216"
-   REGION="us-central1"
-   AWS_VPC_CIDR="<AWS VPC CIDR from AWS team>"
-   VPC_CONNECTOR_CIDR="10.8.0.0/28"   # unused /28 in your GCP network
-   ```
-
-2. Run it in Cloud Shell:
+1. Open `scripts/setup_vpn_step1.sh`
+2. Replace `FILL_IN_AWS_VPC_CIDR` with the CIDR from AWS team
+3. Run in Cloud Shell:
    ```bash
    bash scripts/setup_vpn_step1.sh
    ```
-
-3. The script prints a **GCP VPN Gateway External IP** at the end.
-
-4. **Send this IP to the AWS team** — they need it to create the VPN on their side.
+4. The script prints a **GCP VPN Gateway External IP** at the end
+5. **Send this IP to the AWS team** — they need it to create the VPN connection
 
 ---
 
-## Step 2 — AWS Team: Set up VPN connection
+## Step 3 — AWS Team: Set up VPN connection
 
-Using the GCP external IP received from step 1:
+Using the GCP external IP from step 2:
 
 1. AWS Console → **VPC** → **Customer Gateways** → **Create Customer Gateway**
    - Routing: **Static**
    - IP address: *(GCP external IP)*
-   - Click **Create**
 
 2. AWS Console → **VPC** → **Site-to-Site VPN Connections** → **Create VPN Connection**
    - Customer Gateway: *(the one you just created)*
    - Routing options: **Static**
-   - Static IP Prefixes: *(GCP VPC CIDR — typically `10.128.0.0/9` for GCP default network)*
-   - Click **Create VPN Connection** (takes ~5 minutes)
+   - Static IP Prefixes: `10.128.0.0/9` *(GCP default network CIDR)*
+   - Click **Create** (takes ~5 minutes)
 
-3. Once created, click **Download Configuration**
-   - Vendor: **Generic**
-   - This gives you a file with both tunnel IPs and pre-shared keys
+3. Once created → **Download Configuration** (Vendor: Generic)
+   - This file contains both tunnel IPs and pre-shared keys
 
-4. In your AWS **VPC Route Tables** — add a route for GCP traffic:
-   - Destination: `10.128.0.0/9` (GCP default network CIDR)
+4. In your **VPC Route Tables** — add a route:
+   - Destination: `10.128.0.0/9`
    - Target: the VPN connection
 
-5. Make sure MSK security group allows inbound TCP on port `9092` (or `9094`/`9096`) from GCP CIDR `10.128.0.0/9`
+5. In the **MSK security group** — allow inbound TCP on ports `9092` / `9094` / `9096` from `10.128.0.0/9`
 
 6. **Send back to GCP team:**
-   - Tunnel 1 Outside IP
-   - Tunnel 1 Pre-Shared Key
-   - Tunnel 2 Outside IP
-   - Tunnel 2 Pre-Shared Key
+   - Tunnel 1 Outside IP + Pre-Shared Key
+   - Tunnel 2 Outside IP + Pre-Shared Key
 
 ---
 
-## Step 3 — GCP Team (us): Complete VPN + connect Cloud Run
+## Step 4 — GCP Team: Complete VPN + connect Cloud Run
 
-1. Open `scripts/setup_vpn_step2.sh` and fill in the values from AWS team:
+1. Open `scripts/setup_vpn_step2.sh`
+2. Fill in the 4 values from AWS team:
    ```bash
-   PROJECT_ID="bdi-apps-491216"
-   REGION="us-central1"
-   AWS_VPC_CIDR="<same as step 1>"
-   CLOUD_RUN_SERVICE="n8n-kafka-filter"
-
-   AWS_TUNNEL_1_IP="<from AWS team>"
-   AWS_TUNNEL_1_PSK="<from AWS team>"
-   AWS_TUNNEL_2_IP="<from AWS team>"
-   AWS_TUNNEL_2_PSK="<from AWS team>"
+   AWS_VPC_CIDR="..."        # same as step 2
+   AWS_TUNNEL_1_IP="..."
+   AWS_TUNNEL_1_PSK="..."
+   AWS_TUNNEL_2_IP="..."
+   AWS_TUNNEL_2_PSK="..."
    ```
-
-2. Run it in Cloud Shell:
+3. Run in Cloud Shell:
    ```bash
    bash scripts/setup_vpn_step2.sh
    ```
-
-3. The script creates both tunnels and attaches the VPC connector to Cloud Run.
-   Both tunnels should show status **ESTABLISHED** within 1-2 minutes.
-
-4. Check tunnel status:
+4. Both tunnels should show **ESTABLISHED** within 1-2 minutes
+5. Check status:
    ```bash
    gcloud compute vpn-tunnels list --region=us-central1
    ```
 
 ---
 
-## Step 4 — GCP Team (us): Configure PIPELINES_JSON
+## Step 5 — GCP Team: Update PIPELINES_JSON
 
-Update the `PIPELINES_JSON` env var in Cloud Run with the MSK broker details:
+In Cloud Run → **Edit & Deploy New Revision** → **Variables & Secrets** → update `PIPELINES_JSON`:
 
 ```json
 [
@@ -128,27 +109,20 @@ Update the `PIPELINES_JSON` env var in Cloud Run with the MSK broker details:
 ]
 ```
 
-For plaintext (no auth) Kafka:
-```json
-{
-  "kafka_security_protocol": "PLAINTEXT"
-}
-```
-
-After saving, Cloud Run will restart and connect to MSK automatically.
+For plaintext Kafka (no auth), use `"kafka_security_protocol": "PLAINTEXT"` and omit the SASL fields.
 
 ---
 
-## Step 5 — Verify
+## Step 6 — Verify
 
 Check Cloud Run logs:
 https://console.cloud.google.com/run/detail/us-central1/n8n-kafka-filter/logs?project=bdi-apps-491216
 
 Look for:
 - `Pipeline started` with `"mode": "kafka"` — consumer connected
-- Events flowing: `Consumer started` with no errors
+- No connection errors
 
-Check `/health` endpoint:
+Check the health endpoint:
 ```bash
 curl https://n8n-kafka-filter-674519918276.us-central1.run.app/health
 ```
@@ -166,14 +140,17 @@ Expected:
 - [ ] Share: VPC CIDR, MSK broker endpoints, Kafka auth credentials, topic names
 - [ ] Create Customer Gateway using GCP external IP
 - [ ] Create Site-to-Site VPN connection (static routing)
-- [ ] Add route in VPC route table for GCP CIDR → VPN
-- [ ] Allow inbound Kafka ports from GCP CIDR in MSK security group
+- [ ] Add route in VPC route table: `10.128.0.0/9` → VPN
+- [ ] Allow inbound Kafka ports from `10.128.0.0/9` in MSK security group
 - [ ] Send tunnel IPs + pre-shared keys to GCP team
 
-### GCP Team (us)
-- [ ] Get AWS VPC CIDR + MSK details from AWS team
-- [ ] Run `setup_vpn_step1.sh` → send GCP external IP to AWS team
-- [ ] Wait for AWS team to complete their setup
-- [ ] Run `setup_vpn_step2.sh` with tunnel details → verify ESTABLISHED
+### GCP Team (us) ✓ done
+- [x] Cloud Run deployed and accessible
+- [x] Google Sign-In configured
+- [x] VPN scripts pre-filled with project values (`bdi-apps-491216`, `us-central1`, `n8n-kafka-filter`)
+
+### GCP Team (us) — waiting on AWS
+- [ ] Fill in `AWS_VPC_CIDR` in `setup_vpn_step1.sh` and run it → send GCP IP to AWS team
+- [ ] Fill in tunnel details in `setup_vpn_step2.sh` and run it → verify ESTABLISHED
 - [ ] Update `PIPELINES_JSON` with MSK broker endpoints and credentials
-- [ ] Verify Cloud Run connects to Kafka and events flow to n8n
+- [ ] Verify Kafka consumer connects and events flow to n8n

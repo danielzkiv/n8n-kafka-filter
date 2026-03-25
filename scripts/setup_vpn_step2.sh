@@ -6,17 +6,17 @@
 
 set -euo pipefail
 
-# ── Config — fill these in ───────────────────────────────────────────────────
-PROJECT_ID="YOUR_GCP_PROJECT_ID"
+# ── Config ───────────────────────────────────────────────────────────────────
+PROJECT_ID="bdi-apps-491216"
 REGION="us-central1"
-AWS_VPC_CIDR="10.0.0.0/16"          # Same as in step 1
-CLOUD_RUN_SERVICE="kafka-n8n-forwarder"
+AWS_VPC_CIDR="FILL_IN_AWS_VPC_CIDR"   # Same value as in step 1
+CLOUD_RUN_SERVICE="n8n-kafka-filter"
 
-# From AWS VPN config (given to you by AWS team):
-AWS_TUNNEL_1_IP="YOUR_AWS_TUNNEL_1_OUTSIDE_IP"
-AWS_TUNNEL_1_PSK="YOUR_AWS_TUNNEL_1_PRE_SHARED_KEY"
-AWS_TUNNEL_2_IP="YOUR_AWS_TUNNEL_2_OUTSIDE_IP"
-AWS_TUNNEL_2_PSK="YOUR_AWS_TUNNEL_2_PRE_SHARED_KEY"
+# From AWS VPN config (given to you by AWS team after they set up the VPN):
+AWS_TUNNEL_1_IP="FILL_IN_TUNNEL_1_IP"
+AWS_TUNNEL_1_PSK="FILL_IN_TUNNEL_1_PSK"
+AWS_TUNNEL_2_IP="FILL_IN_TUNNEL_2_IP"
+AWS_TUNNEL_2_PSK="FILL_IN_TUNNEL_2_PSK"
 # ─────────────────────────────────────────────────────────────────────────────
 
 echo "==> Setting project to $PROJECT_ID"
