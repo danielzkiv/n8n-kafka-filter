@@ -1,167 +1,179 @@
-# AWS MSK → Cloud Run Integration
+# AWS MSK → Cloud Run Integration (Site-to-Site VPN)
 
-This document covers what both teams need to do to connect AWS MSK Kafka to the Cloud Run event forwarder.
+Cloud Run connects **directly to MSK Kafka** over a Site-to-Site VPN between GCP and AWS.
 
-The flow is: **MSK Kafka → AWS Lambda → HTTPS → Cloud Run → Filter → n8n**
-
----
-
-## Step 1 — GCP Team (us): Create service account for Lambda
-
-Lambda needs a GCP service account key to authenticate with Cloud Run.
-
-1. Go to: https://console.cloud.google.com/iam-admin/serviceaccounts?project=bdi-apps-491216
-2. Click **Create Service Account**
-   - Name: `lambda-invoker`
-   - Click **Create and Continue**
-3. Grant role: **Cloud Run Invoker** → Continue → Done
-4. Click the new service account → **Keys** tab → **Add Key** → **Create new key** → JSON → **Create**
-   - This downloads a `.json` file — keep it safe
-5. Go to Cloud Run service → **Security** tab → **Add Principal**
-   - Principal: `lambda-invoker@bdi-apps-491216.iam.gserviceaccount.com`
-   - Role: **Cloud Run Invoker**
-   - Save
-
-6. Choose an `INGEST_SECRET` — any random string, e.g.:
-   ```
-   openssl rand -hex 32
-   ```
-   Save this value — you'll need to put it in Cloud Run AND send it to the AWS team.
-
-7. Update `PIPELINES_JSON` in Cloud Run env vars — add `ingest_secret` to the target pipeline:
-   ```json
-   [
-     {
-       "name": "dev",
-       "ingest_secret": "YOUR_INGEST_SECRET_HERE",
-       "n8n_webhook_url": "https://your-n8n.com/webhook/abc"
-     }
-   ]
-   ```
-
-8. **Send to AWS team:**
-   - The downloaded `.json` service account key file
-   - `INGEST_SECRET` value
-   - Cloud Run URL: `https://n8n-kafka-filter-674519918276.us-central1.run.app`
-   - Target pipeline name: `dev` (or `stage`/`prod`)
-
----
-
-## Step 2 — AWS Team: Deploy Lambda
-
-### What you receive from GCP team
-- GCP service account key (`.json` file)
-- `INGEST_SECRET` value
-- Cloud Run URL
-- Pipeline name (`dev` / `stage` / `prod`)
-
-### A. Store the GCP key in Secrets Manager
-
-1. AWS Console → **Secrets Manager** → **Store a new secret**
-2. Secret type: **Other type of secret** → **Plaintext**
-3. Paste the entire contents of the `.json` key file
-4. Secret name: `gcp-lambda-invoker-key`
-5. Click **Next** → **Store**
-
-### B. Package the Lambda function
-
-Run on any machine with Python 3.12 and pip:
-
-```bash
-mkdir lambda_package
-pip install google-auth requests -t lambda_package/
-cp scripts/lambda_handler.py lambda_package/lambda_handler.py
-cd lambda_package && zip -r ../lambda.zip . && cd ..
+```
+MSK Kafka (AWS VPC) ──VPN tunnel──► GCP VPC ──VPC Connector──► Cloud Run ──► Filter ──► n8n
 ```
 
-### C. Create the Lambda function
+The setup is split into steps because both teams need to exchange information mid-way.
 
-1. AWS Console → **Lambda** → **Create function**
-2. **Author from scratch**
-   - Runtime: **Python 3.12**
-   - Architecture: x86_64
-3. Upload `lambda.zip` → **Upload from** → **.zip file**
-4. Set **Handler**: `lambda_handler.lambda_handler`
+---
 
-### D. Set environment variables
+## What we need from AWS team first
 
-In Lambda → **Configuration** → **Environment variables**:
+Before anything can start, ask the AWS team to provide:
 
-| Key | Value |
+| Info needed | Example |
 |---|---|
-| `CLOUD_RUN_URL` | `https://n8n-kafka-filter-674519918276.us-central1.run.app` |
-| `INGEST_ENV` | `dev` (or `stage` / `prod`) |
-| `INGEST_SECRET` | *(value from GCP team)* |
-| `GOOGLE_SA_SECRET` | `gcp-lambda-invoker-key` |
+| AWS VPC CIDR | `10.0.0.0/16` |
+| MSK broker endpoints (private DNS) | `b-1.cluster-xxx.kafka.us-east-1.amazonaws.com:9092` |
+| Kafka security protocol | `PLAINTEXT`, `SSL`, `SASL_SSL` |
+| Kafka SASL username + password | (if using SASL auth) |
+| Kafka topic name(s) | `my-events-topic` |
 
-### E. Grant Lambda access to Secrets Manager
+---
 
-In Lambda → **Configuration** → **Permissions** → click the execution role → Add inline policy:
+## Step 1 — GCP Team (us): Set up VPN gateway
+
+1. Open `scripts/setup_vpn_step1.sh` and fill in the top variables:
+   ```bash
+   PROJECT_ID="bdi-apps-491216"
+   REGION="us-central1"
+   AWS_VPC_CIDR="<AWS VPC CIDR from AWS team>"
+   VPC_CONNECTOR_CIDR="10.8.0.0/28"   # unused /28 in your GCP network
+   ```
+
+2. Run it in Cloud Shell:
+   ```bash
+   bash scripts/setup_vpn_step1.sh
+   ```
+
+3. The script prints a **GCP VPN Gateway External IP** at the end.
+
+4. **Send this IP to the AWS team** — they need it to create the VPN on their side.
+
+---
+
+## Step 2 — AWS Team: Set up VPN connection
+
+Using the GCP external IP received from step 1:
+
+1. AWS Console → **VPC** → **Customer Gateways** → **Create Customer Gateway**
+   - Routing: **Static**
+   - IP address: *(GCP external IP)*
+   - Click **Create**
+
+2. AWS Console → **VPC** → **Site-to-Site VPN Connections** → **Create VPN Connection**
+   - Customer Gateway: *(the one you just created)*
+   - Routing options: **Static**
+   - Static IP Prefixes: *(GCP VPC CIDR — typically `10.128.0.0/9` for GCP default network)*
+   - Click **Create VPN Connection** (takes ~5 minutes)
+
+3. Once created, click **Download Configuration**
+   - Vendor: **Generic**
+   - This gives you a file with both tunnel IPs and pre-shared keys
+
+4. In your AWS **VPC Route Tables** — add a route for GCP traffic:
+   - Destination: `10.128.0.0/9` (GCP default network CIDR)
+   - Target: the VPN connection
+
+5. Make sure MSK security group allows inbound TCP on port `9092` (or `9094`/`9096`) from GCP CIDR `10.128.0.0/9`
+
+6. **Send back to GCP team:**
+   - Tunnel 1 Outside IP
+   - Tunnel 1 Pre-Shared Key
+   - Tunnel 2 Outside IP
+   - Tunnel 2 Pre-Shared Key
+
+---
+
+## Step 3 — GCP Team (us): Complete VPN + connect Cloud Run
+
+1. Open `scripts/setup_vpn_step2.sh` and fill in the values from AWS team:
+   ```bash
+   PROJECT_ID="bdi-apps-491216"
+   REGION="us-central1"
+   AWS_VPC_CIDR="<same as step 1>"
+   CLOUD_RUN_SERVICE="n8n-kafka-filter"
+
+   AWS_TUNNEL_1_IP="<from AWS team>"
+   AWS_TUNNEL_1_PSK="<from AWS team>"
+   AWS_TUNNEL_2_IP="<from AWS team>"
+   AWS_TUNNEL_2_PSK="<from AWS team>"
+   ```
+
+2. Run it in Cloud Shell:
+   ```bash
+   bash scripts/setup_vpn_step2.sh
+   ```
+
+3. The script creates both tunnels and attaches the VPC connector to Cloud Run.
+   Both tunnels should show status **ESTABLISHED** within 1-2 minutes.
+
+4. Check tunnel status:
+   ```bash
+   gcloud compute vpn-tunnels list --region=us-central1
+   ```
+
+---
+
+## Step 4 — GCP Team (us): Configure PIPELINES_JSON
+
+Update the `PIPELINES_JSON` env var in Cloud Run with the MSK broker details:
 
 ```json
+[
+  {
+    "name": "dev",
+    "kafka_bootstrap_servers": "b-1.cluster-xxx.kafka.us-east-1.amazonaws.com:9092,b-2.cluster-xxx.kafka.us-east-1.amazonaws.com:9092",
+    "kafka_topics": ["my-events-topic"],
+    "kafka_consumer_group_id": "n8n-kafka-filter-dev",
+    "kafka_security_protocol": "SASL_SSL",
+    "kafka_sasl_mechanism": "PLAIN",
+    "kafka_sasl_username": "YOUR_USERNAME",
+    "kafka_sasl_password": "YOUR_PASSWORD",
+    "n8n_webhook_url": "https://your-n8n.com/webhook/abc"
+  }
+]
+```
+
+For plaintext (no auth) Kafka:
+```json
 {
-  "Effect": "Allow",
-  "Action": "secretsmanager:GetSecretValue",
-  "Resource": "arn:aws:secretsmanager:*:*:secret:gcp-lambda-invoker-key*"
+  "kafka_security_protocol": "PLAINTEXT"
 }
 ```
 
-### F. Add MSK trigger
-
-1. Lambda → **Add trigger** → **MSK**
-2. MSK cluster: *(your cluster)*
-3. Topic: *(your Kafka topic)*
-4. Starting position: **LATEST**
-5. Batch size: `10` (tune later based on volume)
-6. Click **Add**
-
-### G. Send back to GCP team
-
-- Confirmation that Lambda is deployed and trigger is active
-- MSK topic name(s)
-- Any test event you can produce to verify the flow
+After saving, Cloud Run will restart and connect to MSK automatically.
 
 ---
 
-## Step 3 — GCP Team (us): Verify the flow
+## Step 5 — Verify
 
-Once AWS team confirms Lambda is deployed:
+Check Cloud Run logs:
+https://console.cloud.google.com/run/detail/us-central1/n8n-kafka-filter/logs?project=bdi-apps-491216
 
-1. Ask AWS team to produce a test event to the MSK topic
-2. Check Cloud Run logs:
-   - Go to: https://console.cloud.google.com/run/detail/us-central1/n8n-kafka-filter/logs?project=bdi-apps-491216
-   - Look for: `Ingest event filtered out` or `forwarded`
-3. Check n8n for received webhooks
+Look for:
+- `Pipeline started` with `"mode": "kafka"` — consumer connected
+- Events flowing: `Consumer started` with no errors
 
-### Test manually (without Lambda)
-
+Check `/health` endpoint:
 ```bash
-curl -X POST https://n8n-kafka-filter-674519918276.us-central1.run.app/ingest/dev \
-  -H "Content-Type: application/json" \
-  -H "X-Ingest-Secret: YOUR_INGEST_SECRET" \
-  -d '{"event_type": "order.created", "orderId": "123"}'
+curl https://n8n-kafka-filter-674519918276.us-central1.run.app/health
 ```
 
-Expected responses:
-- `{"status": "forwarded"}` — event matched a rule and was sent to n8n
-- `{"status": "filtered", "reason": "..."}` — event was skipped by filter
-- `{"error": "unauthorized"}` — wrong `INGEST_SECRET`
+Expected:
+```json
+{"status": "ok", "pipelines": {"dev": {"mode": "kafka", "running": true}}}
+```
 
 ---
 
 ## Checklist
 
-### GCP Team
-- [ ] Create `lambda-invoker` service account with Cloud Run Invoker role
-- [ ] Download service account key JSON
-- [ ] Choose and set `INGEST_SECRET` in Cloud Run `PIPELINES_JSON`
-- [ ] Send key file + `INGEST_SECRET` + Cloud Run URL to AWS team
-- [ ] Verify events appear in Cloud Run logs after Lambda is live
-
 ### AWS Team
-- [ ] Store GCP key in Secrets Manager as `gcp-lambda-invoker-key`
-- [ ] Package and deploy Lambda with `lambda_handler.py`
-- [ ] Set all 4 environment variables
-- [ ] Grant Secrets Manager access to Lambda execution role
-- [ ] Add MSK trigger
-- [ ] Produce a test event and confirm it reaches Cloud Run
+- [ ] Share: VPC CIDR, MSK broker endpoints, Kafka auth credentials, topic names
+- [ ] Create Customer Gateway using GCP external IP
+- [ ] Create Site-to-Site VPN connection (static routing)
+- [ ] Add route in VPC route table for GCP CIDR → VPN
+- [ ] Allow inbound Kafka ports from GCP CIDR in MSK security group
+- [ ] Send tunnel IPs + pre-shared keys to GCP team
+
+### GCP Team (us)
+- [ ] Get AWS VPC CIDR + MSK details from AWS team
+- [ ] Run `setup_vpn_step1.sh` → send GCP external IP to AWS team
+- [ ] Wait for AWS team to complete their setup
+- [ ] Run `setup_vpn_step2.sh` with tunnel details → verify ESTABLISHED
+- [ ] Update `PIPELINES_JSON` with MSK broker endpoints and credentials
+- [ ] Verify Cloud Run connects to Kafka and events flow to n8n
