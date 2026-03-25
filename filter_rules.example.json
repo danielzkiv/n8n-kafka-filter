@@ -1,0 +1,44 @@
+[
+  {
+    "rule_id": "only-order-events",
+    "field": "event_type",
+    "operator": "eq",
+    "value": "order.created"
+  },
+  {
+    "rule_id": "high-value-orders",
+    "field": "payload.order_value",
+    "operator": "gte",
+    "value": 1000
+  },
+  {
+    "rule_id": "exclude-test-events",
+    "field": "event_type",
+    "operator": "neq",
+    "value": "test.ping"
+  },
+  {
+    "rule_id": "require-customer-id",
+    "field": "payload.customer_id",
+    "operator": "exists",
+    "value": null
+  },
+  {
+    "rule_id": "specific-event-types",
+    "field": "event_type",
+    "operator": "in",
+    "value": ["order.created", "order.updated", "payment.completed"]
+  },
+  {
+    "rule_id": "premium-customers",
+    "field": "payload.customer.tier",
+    "operator": "in",
+    "value": ["gold", "platinum"]
+  },
+  {
+    "rule_id": "match-event-id-pattern",
+    "field": "event_id",
+    "operator": "regex",
+    "value": "^EVT-[0-9]{6}$"
+  }
+]

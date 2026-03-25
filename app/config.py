@@ -1,0 +1,90 @@
+from __future__ import annotations
+
+import json
+from typing import Literal
+
+from pydantic import AnyHttpUrl, BaseModel, SecretStr, field_validator
+from pydantic_settings import BaseSettings, SettingsConfigDict
+
+
+class PipelineConfig(BaseModel):
+    """Config for one environment's full pipeline: Kafka → Filter → n8n webhook."""
+
+    name: str  # "dev" | "stage" | "prod" — used in logs and metrics
+
+    # --- Kafka ---
+    kafka_bootstrap_servers: str        # "broker1:9092,broker2:9092"
+    kafka_topics: list[str]             # Parsed from comma-separated string or list
+    kafka_consumer_group_id: str = "kafka-n8n-forwarder"
+    kafka_security_protocol: str = "SASL_SSL"
+    kafka_sasl_mechanism: str = "PLAIN"
+    kafka_sasl_username: str | None = None
+    kafka_sasl_password: SecretStr | None = None
+    kafka_auto_offset_reset: str = "earliest"
+
+    # --- Webhook ---
+    n8n_webhook_url: AnyHttpUrl
+    n8n_webhook_secret: SecretStr | None = None  # Sent as X-Webhook-Secret header
+    webhook_timeout_seconds: int = 10
+    webhook_max_retries: int = 3
+    webhook_retry_backoff_seconds: float = 2.0   # Exponential base (capped at 30s)
+
+    # --- Filtering ---
+    filter_mode: Literal["any", "all", "none"] = "none"
+    filter_rules: list[dict] = []
+
+    @field_validator("kafka_topics", mode="before")
+    @classmethod
+    def parse_topics(cls, v: str | list) -> list[str]:
+        if isinstance(v, list):
+            return [str(t).strip() for t in v if str(t).strip()]
+        topics = [t.strip() for t in str(v).split(",") if t.strip()]
+        if not topics:
+            raise ValueError("kafka_topics must contain at least one topic")
+        return topics
+
+
+class Settings(BaseSettings):
+    model_config = SettingsConfigDict(
+        env_file=".env",
+        env_file_encoding="utf-8",
+        case_sensitive=False,
+    )
+
+    # JSON array of PipelineConfig objects.
+    # Store in Secret Manager and inject as PIPELINES_JSON env var.
+    pipelines_json: str
+
+    # --- Service-wide ---
+    port: int = 8080
+    log_level: str = "INFO"
+    service_name: str = "kafka-n8n-forwarder"
+
+    @field_validator("pipelines_json", mode="before")
+    @classmethod
+    def validate_pipelines_json(cls, v: str) -> str:
+        try:
+            parsed = json.loads(v)
+            if not isinstance(parsed, list) or len(parsed) == 0:
+                raise ValueError("pipelines_json must be a non-empty JSON array")
+        except json.JSONDecodeError as e:
+            raise ValueError(f"pipelines_json is not valid JSON: {e}") from e
+        return v
+
+    def get_pipelines(self) -> list[PipelineConfig]:
+        raw: list[dict] = json.loads(self.pipelines_json)
+        pipelines = [PipelineConfig(**p) for p in raw]
+        names = [p.name for p in pipelines]
+        if len(names) != len(set(names)):
+            raise ValueError(f"Pipeline names must be unique, got: {names}")
+        return pipelines
+
+
+_settings: Settings | None = None
+
+
+def get_settings() -> Settings:
+    global _settings
+    if _settings is None:
+        _settings = Settings()
+    return _settings

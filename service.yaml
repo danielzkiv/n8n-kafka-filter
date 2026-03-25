@@ -1,0 +1,54 @@
+apiVersion: serving.knative.dev/v1
+kind: Service
+metadata:
+  name: kafka-n8n-forwarder
+  # Deploy with: gcloud run services replace service.yaml --region=YOUR_REGION
+spec:
+  template:
+    metadata:
+      annotations:
+        # Keep 1 instance alive — persistent Kafka consumers must never scale to zero
+        autoscaling.knative.dev/minScale: "1"
+        # 1 instance = 1 consumer group member per pipeline; safe default
+        # Increase only if your topics have multiple partitions and you want parallelism
+        autoscaling.knative.dev/maxScale: "1"
+        # Consumer loop must get CPU between Kafka messages, not just during HTTP requests
+        run.googleapis.com/cpu-throttling: "false"
+    spec:
+      serviceAccountName: kafka-n8n-forwarder-sa  # Needs Secret Manager access
+      containers:
+        - image: gcr.io/YOUR_PROJECT_ID/kafka-n8n-forwarder:latest
+          ports:
+            - containerPort: 8080
+          resources:
+            limits:
+              cpu: "1"
+              memory: 512Mi
+          # Waits for all 3 Kafka connections before marking ready
+          startupProbe:
+            httpGet:
+              path: /ready
+            initialDelaySeconds: 5
+            periodSeconds: 5
+            failureThreshold: 24   # 120 seconds to connect to all Kafkas
+          # Restarts if any pipeline crashes unrecoverably
+          livenessProbe:
+            httpGet:
+              path: /health
+            periodSeconds: 30
+            failureThreshold: 3
+          env:
+            - name: PORT
+              value: "8080"
+            - name: LOG_LEVEL
+              value: "INFO"
+            - name: SERVICE_NAME
+              value: "kafka-n8n-forwarder"
+            # PIPELINES_JSON holds all 3 environments: Kafka credentials, topics,
+            # filter rules, and n8n webhook URLs.
+            # Store in Secret Manager — it contains passwords.
+            - name: PIPELINES_JSON
+              valueFrom:
+                secretKeyRef:
+                  name: pipelines-config   # Create with: gcloud secrets create pipelines-config
+                  key: latest

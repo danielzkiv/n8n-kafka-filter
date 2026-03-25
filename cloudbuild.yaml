@@ -1,0 +1,33 @@
+steps:
+  # Build the Docker image
+  - name: "gcr.io/cloud-builders/docker"
+    args:
+      - build
+      - -t
+      - gcr.io/$PROJECT_ID/kafka-n8n-forwarder:$COMMIT_SHA
+      - -t
+      - gcr.io/$PROJECT_ID/kafka-n8n-forwarder:latest
+      - .
+
+  # Push both tags
+  - name: "gcr.io/cloud-builders/docker"
+    args: ["push", "gcr.io/$PROJECT_ID/kafka-n8n-forwarder:$COMMIT_SHA"]
+
+  - name: "gcr.io/cloud-builders/docker"
+    args: ["push", "gcr.io/$PROJECT_ID/kafka-n8n-forwarder:latest"]
+
+  # Deploy to Cloud Run
+  - name: "gcr.io/google.com/cloudsdktool/cloud-sdk"
+    entrypoint: gcloud
+    args:
+      - run
+      - services
+      - replace
+      - service.yaml
+      - "--region=$_REGION"
+
+substitutions:
+  _REGION: us-central1
+
+options:
+  logging: CLOUD_LOGGING_ONLY
