@@ -18,13 +18,23 @@ class EventFilterConfig(BaseModel):
 
 
 class PipelineConfig(BaseModel):
-    """Config for one environment's full pipeline: Kafka → Filter → n8n webhook."""
+    """Config for one environment's full pipeline: events → Filter → n8n webhook.
+
+    Two ingestion modes (can be combined):
+    - Kafka consumer: set kafka_bootstrap_servers + kafka_topics
+    - HTTP ingest:    set ingest_secret; Lambda POSTs to POST /ingest/{name}
+    """
 
     name: str  # "dev" | "stage" | "prod" — used in logs and metrics
 
-    # --- Kafka ---
-    kafka_bootstrap_servers: str        # "broker1:9092,broker2:9092"
-    kafka_topics: list[str]             # Parsed from comma-separated string or list
+    # --- HTTP ingest (Lambda → Cloud Run) ---
+    # Secret Lambda sends in X-Ingest-Secret header.
+    # If None, the /ingest/{env} endpoint rejects all requests.
+    ingest_secret: SecretStr | None = None
+
+    # --- Kafka (optional — omit when using HTTP ingest only) ---
+    kafka_bootstrap_servers: str | None = None
+    kafka_topics: list[str] = []
     kafka_consumer_group_id: str = "kafka-n8n-forwarder"
     kafka_security_protocol: str = "SASL_SSL"
     kafka_sasl_mechanism: str = "PLAIN"
@@ -66,13 +76,20 @@ class PipelineConfig(BaseModel):
 
     @field_validator("kafka_topics", mode="before")
     @classmethod
-    def parse_topics(cls, v: str | list) -> list[str]:
+    def parse_topics(cls, v: str | list | None) -> list[str]:
+        if v is None:
+            return []
         if isinstance(v, list):
             return [str(t).strip() for t in v if str(t).strip()]
-        topics = [t.strip() for t in str(v).split(",") if t.strip()]
-        if not topics:
-            raise ValueError("kafka_topics must contain at least one topic")
-        return topics
+        return [t.strip() for t in str(v).split(",") if t.strip()]
+
+    @property
+    def kafka_enabled(self) -> bool:
+        return bool(self.kafka_bootstrap_servers and self.kafka_topics)
+
+    @property
+    def ingest_enabled(self) -> bool:
+        return self.ingest_secret is not None
 
 
 class Settings(BaseSettings):
