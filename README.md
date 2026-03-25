@@ -134,12 +134,19 @@ Or via Console: Cloud Run service → **Security** → **Allow unauthenticated i
 
 1. Go to: https://console.cloud.google.com/auth/overview
 2. Click **Audience** → set to **External**
-3. Add allowed test users (or publish the app for unrestricted access)
+3. Keep status as **Testing** (no need to publish)
+4. Under **Test users** → **Add users** → add every email that should be able to sign in
+
+> **Important**: In Testing mode, Google only allows sign-in for emails explicitly listed as test users. Add all allowed emails here, not just in `ALLOWED_EMAILS`.
 
 ### 3. Add users
 
-Update `ALLOWED_EMAILS` in Cloud Run env vars with a comma-separated list of emails.
-Users not on the list will see an "Access Denied" page after sign-in.
+Every user needs to be added in **two places**:
+
+1. **OAuth consent screen** → Audience → Test users (controls who Google allows to sign in)
+2. **Cloud Run env var** `ALLOWED_EMAILS` (controls who the app lets through after sign-in)
+
+Both lists must include the email, otherwise access will be denied.
 
 ---
 
