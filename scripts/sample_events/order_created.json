@@ -1,0 +1,15 @@
+{
+  "event_id": "EVT-00000001",
+  "event_type": "order.created",
+  "timestamp": "2026-03-25T10:00:00+00:00",
+  "payload": {
+    "order_id": "ORD-999",
+    "customer_id": "CUST-42",
+    "amount": 299.99,
+    "currency": "USD",
+    "items": [
+      {"sku": "PROD-1", "qty": 2, "price": 99.99},
+      {"sku": "PROD-2", "qty": 1, "price": 100.01}
+    ]
+  }
+}

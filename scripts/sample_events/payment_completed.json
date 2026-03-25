@@ -1,0 +1,12 @@
+{
+  "event_id": "EVT-00000002",
+  "event_type": "payment.completed",
+  "timestamp": "2026-03-25T10:01:00+00:00",
+  "payload": {
+    "payment_id": "PAY-555",
+    "order_id": "ORD-999",
+    "amount": 299.99,
+    "method": "card",
+    "status": "success"
+  }
+}

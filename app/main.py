@@ -14,6 +14,7 @@ from app.config import PipelineConfig, get_settings
 from app.consumer import KafkaConsumerService
 from app.filter_engine import FilterEngine
 from app.logging_config import configure_logging
+from app.schema_validator import SchemaValidator
 from app.webhook import WebhookForwarder
 
 settings = get_settings()
@@ -38,7 +39,8 @@ _pipelines: list[PipelineState] = []
 def _build_pipeline(pipeline_config: PipelineConfig) -> PipelineState:
     filter_engine = FilterEngine.from_pipeline(pipeline_config)
     forwarder = WebhookForwarder(pipeline_config)
-    consumer = KafkaConsumerService(pipeline_config, filter_engine, forwarder)
+    schema_validator = SchemaValidator.from_pipeline(pipeline_config) if pipeline_config.event_schemas else None
+    consumer = KafkaConsumerService(pipeline_config, filter_engine, forwarder, schema_validator)
     return PipelineState(config=pipeline_config, consumer=consumer, forwarder=forwarder)
 
 

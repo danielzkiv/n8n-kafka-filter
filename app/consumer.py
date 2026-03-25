@@ -11,6 +11,7 @@ from aiokafka.errors import KafkaError
 if TYPE_CHECKING:
     from app.config import PipelineConfig
     from app.filter_engine import FilterEngine
+    from app.schema_validator import SchemaValidator
     from app.webhook import WebhookForwarder
 
 logger = logging.getLogger(__name__)
@@ -22,15 +23,18 @@ class KafkaConsumerService:
         pipeline: "PipelineConfig",
         filter_engine: "FilterEngine",
         forwarder: "WebhookForwarder",
+        schema_validator: "SchemaValidator | None" = None,
     ) -> None:
         self._pipeline = pipeline
         self._filter_engine = filter_engine
         self._forwarder = forwarder
+        self._schema_validator = schema_validator
         self._consumer: AIOKafkaConsumer | None = None
         self._running = False
         self._connected = False
         self._messages_consumed = 0
         self._messages_filtered = 0
+        self._messages_invalid = 0
 
     @property
     def is_running(self) -> bool:
@@ -42,10 +46,14 @@ class KafkaConsumerService:
 
     @property
     def stats(self) -> dict:
-        return {
+        s = {
             "messages_consumed": self._messages_consumed,
             "messages_filtered": self._messages_filtered,
+            "messages_invalid": self._messages_invalid,
         }
+        if self._schema_validator:
+            s.update(self._schema_validator.stats)
+        return s
 
     async def start(self) -> None:
         p = self._pipeline
@@ -111,6 +119,18 @@ class KafkaConsumerService:
                 )
                 await self._consumer.commit()
                 continue
+
+            # Schema validation (if configured) — runs before filtering
+            if self._schema_validator:
+                is_valid, schema_error = self._schema_validator.validate(event)
+                if not is_valid:
+                    self._messages_invalid += 1
+                    logger.warning(
+                        "Event failed schema validation — skipped",
+                        extra={"env": env, "topic": msg.topic, "offset": msg.offset, "error": schema_error},
+                    )
+                    await self._consumer.commit()
+                    continue
 
             should_forward, reason = self._filter_engine.should_forward(event)
 

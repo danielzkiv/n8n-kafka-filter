@@ -1,13 +1,17 @@
 .env
 .env.*
+.env.docker
 __pycache__/
 *.pyc
 *.pyo
 .pytest_cache/
 tests/
+scripts/
 *.md
 .git/
 .gitignore
 cloudbuild.yaml
 service.yaml
 requirements-dev.txt
+docker-compose.yml
+Makefile

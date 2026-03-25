@@ -1,5 +1,14 @@
 steps:
-  # Build the Docker image
+  # Run tests first — fail fast before building image
+  - name: "python:3.12-slim"
+    entrypoint: bash
+    args:
+      - -c
+      - |
+        pip install -q -r requirements-dev.txt
+        pytest tests/ -v --tb=short
+
+  # Build Docker image
   - name: "gcr.io/cloud-builders/docker"
     args:
       - build
@@ -11,20 +20,16 @@ steps:
 
   # Push both tags
   - name: "gcr.io/cloud-builders/docker"
-    args: ["push", "gcr.io/$PROJECT_ID/kafka-n8n-forwarder:$COMMIT_SHA"]
-
-  - name: "gcr.io/cloud-builders/docker"
-    args: ["push", "gcr.io/$PROJECT_ID/kafka-n8n-forwarder:latest"]
+    args: ["push", "--all-tags", "gcr.io/$PROJECT_ID/kafka-n8n-forwarder"]
 
   # Deploy to Cloud Run
   - name: "gcr.io/google.com/cloudsdktool/cloud-sdk"
-    entrypoint: gcloud
+    entrypoint: bash
     args:
-      - run
-      - services
-      - replace
-      - service.yaml
-      - "--region=$_REGION"
+      - -c
+      - |
+        sed "s|YOUR_PROJECT_ID|$PROJECT_ID|g" service.yaml | \
+        gcloud run services replace - --region=$_REGION --quiet
 
 substitutions:
   _REGION: us-central1

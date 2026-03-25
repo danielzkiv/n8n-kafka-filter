@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING
@@ -21,8 +22,10 @@ class WebhookForwarder:
     def __init__(self, pipeline: "PipelineConfig") -> None:
         self._pipeline = pipeline
         self._session: aiohttp.ClientSession | None = None
+        self._dlq_producer = None   # aiokafka producer, created lazily if dlq_topic is set
         self._messages_forwarded = 0
         self._webhook_errors = 0
+        self._dlq_sent = 0
 
     async def start(self) -> None:
         self._session = aiohttp.ClientSession(
@@ -33,11 +36,34 @@ class WebhookForwarder:
                 "X-Pipeline-Env": self._pipeline.name,
             },
         )
+        if self._pipeline.dlq_topic:
+            await self._start_dlq_producer()
+
+    async def _start_dlq_producer(self) -> None:
+        from aiokafka import AIOKafkaProducer
+        p = self._pipeline
+        kwargs: dict = dict(
+            bootstrap_servers=p.kafka_bootstrap_servers,
+            value_serializer=lambda v: json.dumps(v).encode("utf-8"),
+        )
+        if p.kafka_sasl_username and p.kafka_sasl_password:
+            kwargs.update(
+                security_protocol=p.kafka_security_protocol,
+                sasl_mechanism=p.kafka_sasl_mechanism,
+                sasl_plain_username=p.kafka_sasl_username,
+                sasl_plain_password=p.kafka_sasl_password.get_secret_value(),
+            )
+        self._dlq_producer = AIOKafkaProducer(**kwargs)
+        await self._dlq_producer.start()
+        logger.info("DLQ producer started", extra={"env": p.name, "dlq_topic": p.dlq_topic})
 
     async def close(self) -> None:
         if self._session:
             await self._session.close()
             self._session = None
+        if self._dlq_producer:
+            await self._dlq_producer.stop()
+            self._dlq_producer = None
 
     async def forward(self, event: dict, kafka_metadata: dict) -> bool:
         """Forward event to n8n webhook. Returns True on success."""
@@ -83,18 +109,46 @@ class WebhookForwarder:
                     await asyncio.sleep(wait)
 
         self._webhook_errors += 1
-        logger.error(
-            "Webhook delivery exhausted all retries — event dropped",
-            extra={
-                "env": p.name,
-                "topic": kafka_metadata.get("topic"),
-                "offset": kafka_metadata.get("offset"),
-                "attempts": p.webhook_max_retries + 1,
-                "last_error": str(last_error),
-                "dropped_payload": payload,
-            },
-        )
+        await self._send_to_dlq(payload, str(last_error))
         return False
+
+    async def _send_to_dlq(self, payload: dict, error: str) -> None:
+        p = self._pipeline
+        dlq_record = {
+            **payload,
+            "dlq_metadata": {
+                "env": p.name,
+                "failed_at": datetime.now(timezone.utc).isoformat(),
+                "error": error,
+                "webhook_url": str(p.n8n_webhook_url),
+                "attempts": p.webhook_max_retries + 1,
+            },
+        }
+
+        if self._dlq_producer and p.dlq_topic:
+            try:
+                await self._dlq_producer.send_and_wait(p.dlq_topic, value=dlq_record)
+                self._dlq_sent += 1
+                logger.warning(
+                    "Event sent to DLQ",
+                    extra={"env": p.name, "dlq_topic": p.dlq_topic, "error": error},
+                )
+            except Exception as e:
+                logger.error(
+                    "Failed to send to DLQ — event permanently lost",
+                    extra={"env": p.name, "dlq_topic": p.dlq_topic, "error": str(e), "payload": dlq_record},
+                )
+        else:
+            logger.error(
+                "Webhook delivery exhausted all retries — event dropped (no DLQ configured)",
+                extra={
+                    "env": p.name,
+                    "topic": payload.get("metadata", {}).get("topic"),
+                    "offset": payload.get("metadata", {}).get("offset"),
+                    "error": error,
+                    "dropped_payload": dlq_record,
+                },
+            )
 
     async def _attempt(self, payload: dict, attempt: int) -> None:
         assert self._session is not None, "WebhookForwarder.start() must be called first"
@@ -124,4 +178,5 @@ class WebhookForwarder:
         return {
             "messages_forwarded": self._messages_forwarded,
             "webhook_errors": self._webhook_errors,
+            "dlq_sent": self._dlq_sent,
         }

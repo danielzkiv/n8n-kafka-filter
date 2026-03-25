@@ -54,6 +54,16 @@ class PipelineConfig(BaseModel):
     filter_mode: Literal["any", "all", "none"] = "none"
     filter_rules: list[dict] = []
 
+    # --- Dead Letter Queue ---
+    # Kafka topic where events are written when webhook delivery fails after all retries.
+    # Leave empty to just log failures without re-queueing.
+    dlq_topic: str | None = None
+
+    # --- Schema validation ---
+    # JSON Schema per event type. Events failing validation are logged and dropped
+    # before filtering. Only define schemas for types you want to enforce.
+    event_schemas: dict[str, dict] = {}
+
     @field_validator("kafka_topics", mode="before")
     @classmethod
     def parse_topics(cls, v: str | list) -> list[str]:
