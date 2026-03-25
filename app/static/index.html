@@ -250,8 +250,7 @@ function addModalRule() {
 function ruleRow(r) {
   const val = r.value === null || r.value === undefined ? '' : String(r.value);
   return `
-    <div class="rule flex items-center gap-1.5">
-      <input class="r-id border rounded px-2 py-1 text-xs text-gray-400 w-20" value="${r.rule_id||''}" placeholder="id">
+    <div class="rule flex items-center gap-1.5" data-rule-id="${r.rule_id||''}">
       <input class="r-field border rounded px-2 py-1 text-sm flex-1" value="${r.field||''}" placeholder="field.path">
       <select class="r-op border rounded px-2 py-1 text-sm">
         ${OPERATORS.map(op=>`<option value="${op}" ${r.operator===op?'selected':''}>${op}</option>`).join('')}
@@ -265,7 +264,6 @@ function newRuleEl() {
   const d = document.createElement('div');
   d.className = 'rule flex items-center gap-1.5';
   d.innerHTML = `
-    <input class="r-id border rounded px-2 py-1 text-xs text-gray-400 w-20" placeholder="id">
     <input class="r-field border rounded px-2 py-1 text-sm flex-1" placeholder="field.path">
     <select class="r-op border rounded px-2 py-1 text-sm">
       ${OPERATORS.map(op=>`<option>${op}</option>`).join('')}
@@ -281,7 +279,7 @@ function collectRules(container) {
     let value;
     try { value = JSON.parse(raw); } catch { value = raw || null; }
     return {
-      rule_id:  row.querySelector('.r-id').value || ('r-' + Math.random().toString(36).slice(2,7)),
+      rule_id:  row.dataset.ruleId || ('r-' + Math.random().toString(36).slice(2,7)),
       field:    row.querySelector('.r-field').value.trim(),
       operator: row.querySelector('.r-op').value,
       value,
