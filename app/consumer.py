@@ -150,6 +150,7 @@ class KafkaConsumerService:
                     "partition": msg.partition,
                     "offset": msg.offset,
                     "timestamp_ms": msg.timestamp,
+                    "event_type": event.get(self._pipeline.event_type_field),
                 }
                 await self._forwarder.forward(event, kafka_metadata)
                 logger.debug("Message forwarded", extra=log_extra)

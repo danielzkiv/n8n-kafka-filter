@@ -170,6 +170,7 @@ async def ingest(env: str, request: Request) -> JSONResponse:
         "env": env,
         "source": "http-ingest",
         "ingested_at": datetime.now(timezone.utc).isoformat(),
+        "event_type": event.get(state.config.event_type_field),
     }
     success = await state.forwarder.forward(event, metadata)
 
