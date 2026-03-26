@@ -212,26 +212,6 @@ Both lists must include the email, otherwise access will be denied.
 
 ---
 
-## AWS Lambda (MSK Ingest)
-
-For reading from AWS MSK Kafka (private VPC), deploy `scripts/lambda_handler.py` as an AWS Lambda function with an MSK trigger.
-
-See the file header for full setup instructions including:
-- GCP service account creation (Cloud Run Invoker role)
-- Storing the service account key in AWS Secrets Manager
-- Lambda packaging and deployment
-
-Required Lambda env vars:
-
-| Variable | Description |
-|---|---|
-| `CLOUD_RUN_URL` | Cloud Run service URL |
-| `INGEST_ENV` | Pipeline name (`dev`, `stage`, `prod`) |
-| `INGEST_SECRET` | Must match `ingest_secret` in `PIPELINES_JSON` |
-| `GOOGLE_SA_SECRET` | AWS Secrets Manager secret name holding GCP service account JSON |
-
----
-
 ## Local Development
 
 ```bash
@@ -260,7 +240,7 @@ docker run --env-file .env -p 8080:8080 kafka-n8n-forwarder
 
 | Endpoint | Method | Description |
 |---|---|---|
-| `/ingest/{env}` | POST | Receive event from Lambda/HTTP client |
+| `/ingest/{env}` | POST | Receive event from HTTP client |
 | `/ui` | GET | Filter configuration UI (auth-protected) |
 | `/health` | GET | Service health — per-pipeline status |
 | `/ready` | GET | Readiness probe — Kafka connection status |
