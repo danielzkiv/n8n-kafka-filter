@@ -241,8 +241,23 @@ function addModalRule() {
   document.getElementById('m-rules').appendChild(newRuleEl());
 }
 
+function detectType(v) {
+  if (typeof v === 'number') return 'num';
+  if (typeof v === 'boolean') return 'bool';
+  return 'str';
+}
+
+function typeSelect(selected) {
+  return `<select class="r-type border rounded px-2 py-1 text-sm">
+    <option value="str" ${selected==='str'?'selected':''}>str</option>
+    <option value="num" ${selected==='num'?'selected':''}>num</option>
+    <option value="bool" ${selected==='bool'?'selected':''}>bool</option>
+  </select>`;
+}
+
 function ruleRow(r) {
   const val = r.value === null || r.value === undefined ? '' : String(r.value);
+  const type = detectType(r.value);
   return `
     <div class="rule flex items-center gap-1.5" data-rule-id="${r.rule_id||''}">
       <input class="r-field border rounded px-2 py-1 text-sm flex-1" value="${r.field||''}" placeholder="field.path">
@@ -250,6 +265,7 @@ function ruleRow(r) {
         ${OPERATORS.map(op=>`<option value="${op}" ${r.operator===op?'selected':''}>${op}</option>`).join('')}
       </select>
       <input class="r-val border rounded px-2 py-1 text-sm w-24" value="${val}" placeholder="value">
+      ${typeSelect(type)}
       <button onclick="this.closest('.rule').remove()" class="text-red-400 hover:text-red-600 w-5 text-center">&times;</button>
     </div>`;
 }
@@ -263,6 +279,7 @@ function newRuleEl() {
       ${OPERATORS.map(op=>`<option>${op}</option>`).join('')}
     </select>
     <input class="r-val border rounded px-2 py-1 text-sm w-24" placeholder="value">
+    ${typeSelect('str')}
     <button onclick="this.closest('.rule').remove()" class="text-red-400 hover:text-red-600 w-5 text-center">&times;</button>`;
   return d;
 }
@@ -270,8 +287,11 @@ function newRuleEl() {
 function collectRules(container) {
   return Array.from(container.querySelectorAll('.rule')).map(row => {
     const raw = row.querySelector('.r-val').value.trim();
+    const type = row.querySelector('.r-type')?.value || 'str';
     let value;
-    try { value = JSON.parse(raw); } catch { value = raw || null; }
+    if (type === 'num') value = raw === '' ? null : Number(raw);
+    else if (type === 'bool') value = raw.toLowerCase() === 'true';
+    else value = raw || null;
     return {
       rule_id:  row.dataset.ruleId || ('r-' + Math.random().toString(36).slice(2,7)),
       field:    row.querySelector('.r-field').value.trim(),
