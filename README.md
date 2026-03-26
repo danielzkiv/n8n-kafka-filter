@@ -38,11 +38,7 @@ AWS MSK Kafka ──► Lambda (MSK trigger) ──HTTPS──► Cloud Run ─�
 [
   {
     "name": "dev",
-    "kafka_bootstrap_servers": "b-1.your-cluster.kafka.us-east-1.amazonaws.com:9092",
-    "kafka_topics": ["your-topic-name"],
-    "kafka_security_protocol": "SASL_SSL",
-    "kafka_sasl_username": "your-username",
-    "kafka_sasl_password": "your-password",
+    "ingest_secret": "your-secret-here",
     "n8n_webhook_url": "https://your-n8n.com/webhook/abc"
   }
 ]
@@ -50,7 +46,7 @@ AWS MSK Kafka ──► Lambda (MSK trigger) ──HTTPS──► Cloud Run ─�
 
 ### All PIPELINES_JSON fields
 
-`PIPELINES_JSON` is a JSON array — one object per environment (dev, stage, prod). Each object is one pipeline: one Kafka connection, one n8n webhook, one set of filter rules.
+`PIPELINES_JSON` is a JSON array — one object per environment (dev, stage, prod). Each object is one pipeline: one ingest secret, one n8n webhook, one set of filter rules.
 
 **Required:**
 
@@ -58,19 +54,7 @@ AWS MSK Kafka ──► Lambda (MSK trigger) ──HTTPS──► Cloud Run ─�
 |---|---|
 | `name` | Pipeline name — must be unique. Used in logs, metrics, and the `/ingest/{name}` URL. Example: `"dev"` |
 | `n8n_webhook_url` | Full URL of the n8n webhook to forward events to |
-
-**Kafka connection** (optional — only needed when running Cloud Run as a direct Kafka consumer instead of using Lambda):
-
-| Field | Default | Description |
-|---|---|---|
-| `kafka_bootstrap_servers` | — | Comma-separated broker addresses. Example: `"b-1.cluster.kafka.amazonaws.com:9092"` |
-| `kafka_topics` | — | Topic name(s) to consume. Example: `["my-topic"]` |
-| `kafka_consumer_group_id` | `"kafka-n8n-forwarder"` | Kafka consumer group ID |
-| `kafka_security_protocol` | `"SASL_SSL"` | `PLAINTEXT`, `SSL`, `SASL_PLAINTEXT`, or `SASL_SSL` |
-| `kafka_sasl_mechanism` | `"PLAIN"` | `PLAIN`, `SCRAM-SHA-256`, or `SCRAM-SHA-512` |
-| `kafka_sasl_username` | — | Kafka username (omit if no auth) |
-| `kafka_sasl_password` | — | Kafka password |
-| `kafka_auto_offset_reset` | `"earliest"` | Where to start reading: `"earliest"` or `"latest"` |
+| `ingest_secret` | Lambda sends this in the `X-Ingest-Secret` header — requests without it are rejected |
 
 **Webhook delivery:**
 
@@ -87,13 +71,6 @@ AWS MSK Kafka ──► Lambda (MSK trigger) ──HTTPS──► Cloud Run ─�
 |---|---|---|
 | `event_type_field` | `"event_type"` | Which field in the event body identifies its type |
 | `event_filters` | `{}` | Filter rules per event type — managed via the `/ui` |
-
-**Other:**
-
-| Field | Default | Description |
-|---|---|---|
-| `ingest_secret` | — | Enables the `/ingest/{name}` HTTP endpoint. Any POST must include this as `X-Ingest-Secret` header |
-| `dlq_topic` | — | Kafka topic to write failed events to after all retries are exhausted |
 
 ---
 
@@ -153,7 +130,7 @@ Go to your Cloud Run service → **Edit & Deploy New Revision** → **Variables 
 | `GOOGLE_CLIENT_SECRET` | Same as above |
 | `ALLOWED_EMAILS` | Comma-separated list, e.g. `user@gmail.com,other@company.com` |
 
-### 6. Fix public access (org policy)
+### 5. Fix public access (org policy)
 
 If your GCP org blocks unauthenticated Cloud Run services, ask a GCP admin to run:
 
@@ -229,7 +206,7 @@ docker run --env-file .env -p 8080:8080 kafka-n8n-forwarder
 | `/ingest/{env}` | POST | Receive event from HTTP client |
 | `/ui` | GET | Filter configuration UI (auth-protected) |
 | `/health` | GET | Service health — per-pipeline status |
-| `/ready` | GET | Readiness probe — Kafka connection status |
+| `/ready` | GET | Readiness probe — service startup status |
 | `/metrics` | GET | Uptime, forwarded/filtered counts |
 | `/auth/login` | GET | Initiate Google Sign-In |
 | `/auth/callback` | GET | OAuth callback |
