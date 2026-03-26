@@ -29,6 +29,8 @@ AWS MSK Kafka ──VPN tunnel──► GCP VPC ──VPC Connector──► Clo
 | `ALLOWED_EMAILS` | — | — | Comma-separated emails allowed to access `/ui`. If empty, any authenticated Google user is allowed |
 | `PORT` | — | `8080` | HTTP server port |
 | `LOG_LEVEL` | — | `INFO` | `DEBUG`, `INFO`, `WARNING`, `ERROR` |
+| `GCS_BUCKET` | — | — | GCS bucket name to persist `filter_config.json` across redeployments. Recommended for Cloud Run. |
+| `GCS_FILTER_CONFIG_OBJECT` | — | `filter_config.json` | Object name within the bucket |
 
 ### PIPELINES_JSON format
 
@@ -102,7 +104,7 @@ Access at `/ui`. Requires Google Sign-In when `GOOGLE_CLIENT_ID` is set.
 - Add event types with any/all rules
 - Rules support: `eq`, `neq`, `contains`, `in`, `exists`, `regex`, `gt`, `gte`, `lt`, `lte`
 - Changes apply instantly (hot-reload, no restart needed)
-- Filter config is stored in `filter_config.json` (gitignored — persists in the container)
+- Filter config is stored in GCS (`GCS_BUCKET` env var) so it survives redeployments. Falls back to local `filter_config.json` when `GCS_BUCKET` is not set.
 
 **Logic**: unknown event type → skip. Known event type with no rules → skip. Rules match → forward.
 
