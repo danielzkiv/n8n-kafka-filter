@@ -7,15 +7,8 @@ spec:
   template:
     metadata:
       annotations:
-        # Keep 1 instance alive — persistent Kafka consumers must never scale to zero
-        autoscaling.knative.dev/minScale: "1"
-        # 1 instance = 1 consumer group member per pipeline
-        autoscaling.knative.dev/maxScale: "1"
-        # Consumer loop must get CPU between Kafka messages, not just during HTTP requests
-        run.googleapis.com/cpu-throttling: "false"
-        # VPC connector routes traffic through GCP VPC → VPN tunnel → AWS MSK
-        run.googleapis.com/vpc-access-connector: projects/bdi-apps-491216/locations/us-central1/connectors/kafka-connector
-        run.googleapis.com/vpc-access-egress: all-traffic
+        # Stateless HTTP service — can scale to zero between requests
+        autoscaling.knative.dev/minScale: "0"
     spec:
       serviceAccountName: kafka-n8n-forwarder-sa  # Needs Secret Manager access
       containers:
@@ -30,9 +23,9 @@ spec:
           startupProbe:
             httpGet:
               path: /ready
-            initialDelaySeconds: 5
+            initialDelaySeconds: 2
             periodSeconds: 5
-            failureThreshold: 36   # 180 seconds to connect to Kafka
+            failureThreshold: 6
           # Restarts if pipeline crashes unrecoverably
           livenessProbe:
             httpGet:
@@ -46,8 +39,8 @@ spec:
               value: "INFO"
             - name: SERVICE_NAME
               value: "n8n-kafka-filter"
-            # PIPELINES_JSON holds all pipeline configs: Kafka credentials, topics, n8n URLs.
-            # Store in Secret Manager — it contains passwords.
+            # PIPELINES_JSON holds all pipeline configs: ingest secrets, n8n webhook URLs.
+            # Store in Secret Manager — it contains secrets.
             - name: PIPELINES_JSON
               valueFrom:
                 secretKeyRef:

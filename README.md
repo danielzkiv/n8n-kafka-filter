@@ -1,18 +1,18 @@
-# n8n Kafka Filter — Google Cloud Run
+# n8n Event Forwarder — Google Cloud Run
 
-A persistent Cloud Run service that connects directly to AWS MSK Kafka over a Site-to-Site VPN, filters events by type and rules, and forwards matching events to n8n webhooks.
+Receives events from AWS Lambda (MSK trigger), filters by type and rules, and forwards matching events to n8n webhooks.
 
 ## Architecture
 
 ```
-AWS MSK Kafka ──VPN tunnel──► GCP VPC ──VPC Connector──► Cloud Run ──► Filter ──► n8n webhook
+AWS MSK Kafka ──► Lambda (MSK trigger) ──HTTPS──► Cloud Run ──► Filter ──► n8n webhook
 ```
 
-- **Kafka consumer**: Cloud Run connects directly to MSK over a Site-to-Site VPN — no Lambda needed
-- **VPC Connector**: routes all Cloud Run traffic through the GCP VPC and into the VPN tunnel
+- **Lambda**: consumes from MSK natively, POSTs each event to Cloud Run over public HTTPS
+- **Cloud Run**: stateless HTTP service — authenticates, filters, and forwards to n8n
 - **Filter engine**: routes by `event_type` field → applies rules (any/all) → forward or skip
 - **Filter UI**: web interface at `/ui` to manage event types and rules (Google Sign-In protected)
-- **Runtime**: Python 3.12 + asyncio (aiokafka + aiohttp + FastAPI)
+- **Runtime**: Python 3.12 + asyncio (aiohttp + FastAPI)
 
 ---
 
@@ -59,7 +59,7 @@ AWS MSK Kafka ──VPN tunnel──► GCP VPC ──VPC Connector──► Clo
 | `name` | Pipeline name — must be unique. Used in logs, metrics, and the `/ingest/{name}` URL. Example: `"dev"` |
 | `n8n_webhook_url` | Full URL of the n8n webhook to forward events to |
 
-**Kafka connection** (needed when connecting directly to Kafka over VPN):
+**Kafka connection** (optional — only needed when running Cloud Run as a direct Kafka consumer instead of using Lambda):
 
 | Field | Default | Description |
 |---|---|---|
@@ -137,31 +137,17 @@ bash scripts/setup_cicd.sh
 
 Cloud Build will now build and deploy automatically on every push to `main`.
 
-### 3. Set up VPN to AWS MSK
+### 3. Set up the AWS Lambda consumer
 
-Follow `AWS_INTEGRATION.md` — this sets up the Site-to-Site VPN and VPC connector so Cloud Run can reach MSK.
+Follow `AWS_LAMBDA.md` to create the Lambda function with an MSK trigger that POSTs events to this Cloud Run service.
 
-### 4. Set up MSK DNS resolution
-
-GCP cannot resolve AWS private DNS hostnames (e.g. `b-1.cluster.kafka.us-east-1.amazonaws.com`) without a forwarding zone. Run in Cloud Shell after the VPN is established:
-
-```bash
-# Replace 10.0.0.2 with your AWS VPC base CIDR + 2 (e.g. VPC is 10.0.0.0/16 → resolver is 10.0.0.2)
-gcloud dns managed-zones create aws-kafka-dns \
-  --dns-name="kafka.us-east-1.amazonaws.com." \
-  --description="Forward MSK DNS to AWS resolver" \
-  --visibility=private \
-  --networks=default \
-  --forwarding-targets=10.0.0.2
-```
-
-### 5. Set environment variables in Cloud Run
+### 4. Set environment variables in Cloud Run
 
 Go to your Cloud Run service → **Edit & Deploy New Revision** → **Variables & Secrets**:
 
 | Variable | Where to get it |
 |---|---|
-| `PIPELINES_JSON` | MSK broker endpoints + n8n webhook URLs (see format above) |
+| `PIPELINES_JSON` | ingest secrets + n8n webhook URLs (see format above) |
 | `SESSION_SECRET` | Any random string (e.g. `openssl rand -hex 32`) |
 | `GOOGLE_CLIENT_ID` | Google Cloud Console → APIs & Services → Credentials |
 | `GOOGLE_CLIENT_SECRET` | Same as above |

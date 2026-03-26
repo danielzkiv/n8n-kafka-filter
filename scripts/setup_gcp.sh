@@ -78,8 +78,8 @@ gcloud run services replace - \
   --region="${REGION}" \
   --quiet
 
-# ── 8. Allow unauthenticated health checks (internal only) ───────────────────
-# The service is not publicly callable — Cloud Run still needs to reach /health
+# ── 8. Allow public access — Lambda POSTs to /ingest/{env} over public HTTPS ─
+# Authentication is handled by the X-Ingest-Secret header (set in PIPELINES_JSON)
 gcloud run services add-iam-policy-binding "${SERVICE_NAME}" \
   --region="${REGION}" \
   --member="allUsers" \
