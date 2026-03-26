@@ -223,9 +223,12 @@ function saveModal() {
   const et = document.getElementById('m-et').value.trim();
   if (!et) { alert('Event type name is required'); return; }
 
+  const rulesContainer = document.getElementById('m-rules');
+  if (!validateRules(rulesContainer)) return;
+
   const modeEl = document.querySelector('input[name="m-mode"]:checked');
   const mode = modeEl ? modeEl.value : 'any';
-  const rules = collectRules(document.getElementById('m-rules'));
+  const rules = collectRules(rulesContainer);
 
   const ef = pipelines[active].event_filters || {};
   if (editingKey && editingKey !== et) delete ef[editingKey];
@@ -335,6 +338,32 @@ async function save() {
 document.getElementById('modal').addEventListener('click', e => {
   if (e.target === e.currentTarget) closeModal();
 });
+
+function showError(msg) {
+  const el = document.createElement('div');
+  el.className = 'fixed bottom-4 right-4 bg-red-600 text-white text-sm px-4 py-2.5 rounded-lg shadow-lg z-50 transition-opacity duration-300';
+  el.textContent = msg;
+  document.body.appendChild(el);
+  setTimeout(() => { el.style.opacity = '0'; setTimeout(() => el.remove(), 300); }, 3000);
+}
+
+function validateRules(container) {
+  for (const row of container.querySelectorAll('.rule')) {
+    const field = row.querySelector('.r-field').value.trim();
+    if (!field) continue;
+    const raw = row.querySelector('.r-val').value.trim();
+    const type = row.querySelector('.r-type')?.value || 'str';
+    if (type === 'num' && raw !== '' && isNaN(Number(raw))) {
+      showError(`Rule "${field}": value "${raw}" is not a valid number`);
+      return false;
+    }
+    if (type === 'bool' && raw !== '' && raw.toLowerCase() !== 'true' && raw.toLowerCase() !== 'false') {
+      showError(`Rule "${field}": value "${raw}" is not a valid boolean (use true/false)`);
+      return false;
+    }
+  }
+  return true;
+}
 
 load();
 </script>
